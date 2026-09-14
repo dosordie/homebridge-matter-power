@@ -1,7 +1,7 @@
 {
   "name": "homebridge-matter-power",
   "displayName": "Homebridge Matter Power",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Expose arbitrary MQTT electrical power and energy values to Apple Home and other Matter controllers as native Matter measurements.",
   "author": "dosordie",
   "license": "MIT",
