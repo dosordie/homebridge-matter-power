@@ -2,7 +2,7 @@
   "pluginAlias": "MatterPower",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Matter-only plugin: publishes MQTT power values as native Matter ElectricalPowerMeasurement data. Enable Matter for this plugin's child bridge and pair the Matter QR code with Apple Home.",
+  "headerDisplay": "Matter-only plugin: publishes MQTT values as native Matter electrical power/energy measurements. Enable Matter for this plugin's child bridge and pair the Matter QR code with Apple Home.",
   "schema": {
     "type": "object",
     "required": ["name", "mqttUrl", "devices"],
@@ -27,36 +27,85 @@
         "type": "string"
       },
       "devices": {
-        "title": "Power devices",
+        "title": "Electrical devices",
         "type": "array",
         "minItems": 1,
         "items": {
-          "title": "Power device",
+          "title": "Electrical device",
           "type": "object",
           "required": ["name", "topic"],
           "properties": {
             "id": {
               "title": "Stable ID (optional)",
               "type": "string",
-              "description": "Optional stable identity. If omitted, the MQTT topic is used. Set this before changing a topic if you want Apple Home to keep the same accessory."
+              "description": "Optional stable identity. If omitted, the power MQTT topic is used. Keep this ID unchanged when changing topics."
             },
             "name": {
               "title": "Name",
               "type": "string",
               "required": true,
-              "placeholder": "PV-Anlage"
+              "placeholder": "Hausverbrauch"
             },
             "topic": {
-              "title": "MQTT topic",
+              "title": "Power topic",
               "type": "string",
               "required": true,
-              "placeholder": "home/pv/power"
+              "placeholder": "home/house/power",
+              "description": "Numeric MQTT payload containing active power."
             },
             "multiplier": {
-              "title": "Multiplier",
+              "title": "Power multiplier",
               "type": "number",
               "default": 1,
-              "description": "Multiply the numeric MQTT payload by this value before publishing watts. Example: use 1000 if the topic is in kW."
+              "description": "Multiply the power payload before publishing watts. Use 1000 when the topic is in kW."
+            },
+            "voltageTopic": {
+              "title": "Voltage topic (optional)",
+              "type": "string",
+              "placeholder": "home/grid/voltage",
+              "description": "Numeric MQTT payload containing voltage in V."
+            },
+            "voltageMultiplier": {
+              "title": "Voltage multiplier",
+              "type": "number",
+              "default": 1,
+              "description": "Multiply the voltage payload before publishing volts."
+            },
+            "currentTopic": {
+              "title": "Current topic (optional)",
+              "type": "string",
+              "placeholder": "home/grid/current",
+              "description": "Numeric MQTT payload containing current in A."
+            },
+            "currentMultiplier": {
+              "title": "Current multiplier",
+              "type": "number",
+              "default": 1,
+              "description": "Multiply the current payload before publishing amps."
+            },
+            "energyImportedTopic": {
+              "title": "Imported/consumed energy topic (optional)",
+              "type": "string",
+              "placeholder": "home/house/energy_total",
+              "description": "Monotonically increasing cumulative energy counter. Do not use a daily counter that resets to zero."
+            },
+            "energyImportedUnit": {
+              "title": "Imported energy unit",
+              "type": "string",
+              "default": "kWh",
+              "enum": ["Wh", "kWh"]
+            },
+            "energyExportedTopic": {
+              "title": "Exported/returned energy topic (optional)",
+              "type": "string",
+              "placeholder": "home/grid/export_total",
+              "description": "Monotonically increasing cumulative returned/exported energy counter."
+            },
+            "energyExportedUnit": {
+              "title": "Exported energy unit",
+              "type": "string",
+              "default": "kWh",
+              "enum": ["Wh", "kWh"]
             }
           }
         }
