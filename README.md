@@ -36,6 +36,18 @@ The endpoint intentionally uses Matter's `OnOffOutlet` device type for the first
 
 This plugin is Matter-only and publishes no HAP accessories. Pair the **Matter QR code**, not the HAP QR code.
 
+## Install for testing
+
+Until the plugin is published to npm, install the branch as a GitHub source archive instead of a `git+https` dependency. Some npm/Homebridge installations create a broken global symlink while preparing a direct Git dependency.
+
+```bash
+sudo rm -rf /usr/lib/node_modules/homebridge-matter-power
+sudo rm -rf /usr/lib/node_modules/.homebridge-matter-power-*
+sudo npm install -g "https://github.com/dosordie/homebridge-matter-power/archive/refs/heads/feature/initial-mqtt-matter-power.tar.gz"
+```
+
+The repository contains prebuilt `dist/*.js` files, so no local TypeScript compiler is required for this test installation.
+
 ## Configuration
 
 ```json
