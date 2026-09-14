@@ -1,30 +1,45 @@
 # homebridge-matter-power
 
-Matter-only Homebridge plugin that exposes arbitrary MQTT power values as native Matter electrical power measurements for Apple Home (iOS/iPadOS/tvOS 27+).
+Matter-only Homebridge plugin that exposes arbitrary MQTT electrical measurements as native Matter data for Apple Home (iOS/iPadOS/tvOS 27+).
 
 > Early development / proof of concept. Not published to npm yet.
 
 ## What it does
 
-A numeric MQTT payload is interpreted as a power value and exposed through Matter's native `ElectricalPowerMeasurement.activePower` attribute.
+The plugin creates virtual Matter `OnOffOutlet` accessories and feeds them from numeric MQTT topics.
+
+Supported measurements:
+
+- active power (`ElectricalPowerMeasurement.activePower`)
+- voltage (`ElectricalPowerMeasurement.voltage`)
+- active current (`ElectricalPowerMeasurement.activeCurrent`)
+- cumulative imported/consumed energy (`ElectricalEnergyMeasurement.cumulativeEnergyImported`)
+- cumulative exported/returned energy (`ElectricalEnergyMeasurement.cumulativeEnergyExported`)
+
+Matter uses milli-units internally. The plugin converts W/V/A/Wh/kWh automatically before publishing to Matter.
 
 Example:
 
 ```text
-Node-RED -> MQTT topic home/pv/power -> 6432 W
-                                      |
-                                      v
-                           homebridge-matter-power
-                                      |
-                                      v
-                         Matter OnOffOutlet endpoint
-                         activePower = 6,432,000 mW
-                                      |
-                                      v
-                              Apple Home / iOS 27
+Node-RED / MQTT
+  home/house/power         1842 W
+  home/house/voltage       231.4 V
+  home/house/current       7.9 A
+  home/house/energy_total  9482.63 kWh
+             |
+             v
+   homebridge-matter-power
+             |
+             v
+      Matter OnOffOutlet
+      ElectricalPowerMeasurement
+      ElectricalEnergyMeasurement
+             |
+             v
+       Apple Home / iOS 27
 ```
 
-The endpoint intentionally uses Matter's `OnOffOutlet` device type for the first Apple Home test. Current Apple Home versions show live wattage on outlet-typed Matter accessories, while identical power clusters on some other device types are not shown directly on the tile.
+The endpoint intentionally uses Matter's `OnOffOutlet` device type. Current Apple Home versions show live wattage on outlet-typed Matter accessories, while identical power clusters on some other device types are not shown directly on the tile.
 
 ## Requirements
 
@@ -50,6 +65,8 @@ The repository contains prebuilt `dist/*.js` files, so no local TypeScript compi
 
 ## Configuration
 
+Power-only configuration remains supported:
+
 ```json
 {
   "name": "Matter Power",
@@ -65,6 +82,36 @@ The repository contains prebuilt `dist/*.js` files, so no local TypeScript compi
 }
 ```
 
+A device with power, voltage, current and cumulative consumed energy:
+
+```json
+{
+  "id": "house",
+  "name": "Hausverbrauch",
+  "topic": "home/house/power",
+  "voltageTopic": "home/house/voltage",
+  "currentTopic": "home/house/current",
+  "energyImportedTopic": "home/house/energy_total",
+  "energyImportedUnit": "kWh"
+}
+```
+
+A bidirectional grid meter can expose both cumulative directions:
+
+```json
+{
+  "id": "grid",
+  "name": "Netz",
+  "topic": "home/grid/power",
+  "voltageTopic": "home/grid/voltage",
+  "currentTopic": "home/grid/current",
+  "energyImportedTopic": "home/grid/import_total",
+  "energyImportedUnit": "kWh",
+  "energyExportedTopic": "home/grid/export_total",
+  "energyExportedUnit": "kWh"
+}
+```
+
 Optional MQTT authentication:
 
 ```json
@@ -74,59 +121,74 @@ Optional MQTT authentication:
 }
 ```
 
-Each topic must currently contain a plain numeric payload. Example:
+All topics must contain plain numeric payloads.
 
-```text
-6432
-```
+### Units and multipliers
 
-means `6432 W`.
-
-If the MQTT value is in kW, configure a multiplier of `1000`:
+Power topics are interpreted as watts by default. If the source publishes kW, use:
 
 ```json
 {
-  "id": "pv",
-  "name": "PV-Anlage",
   "topic": "home/pv/power_kw",
   "multiplier": 1000
 }
 ```
 
-Using an explicit `id` is recommended because it keeps the Matter accessory identity stable if the MQTT topic is changed later. If `id` is omitted, the topic is used as the identity.
+Voltage and current are interpreted as V and A. Optional `voltageMultiplier` and `currentMultiplier` fields can scale unusual source units.
 
-## Node-RED test
+Energy topics support `Wh` and `kWh`:
 
-Publish the current PV power to:
-
-```text
-home/pv/power
+```json
+{
+  "energyImportedTopic": "home/house/energy_total",
+  "energyImportedUnit": "kWh"
+}
 ```
 
-with a numeric payload such as:
+Use a **monotonically increasing cumulative energy counter**. Do not feed a daily counter that resets to zero into `cumulativeEnergyImported` or `cumulativeEnergyExported`.
+
+Using an explicit `id` is recommended because it keeps the Matter accessory identity stable when MQTT topics are changed later.
+
+## Node-RED
+
+Publish numeric values to the configured MQTT topics. Retained MQTT messages are recommended so Homebridge receives the most recent values immediately after reconnecting.
+
+Example:
 
 ```text
-6432
+home/house/power         -> 1842
+home/house/voltage       -> 231.4
+home/house/current       -> 7.9
+home/house/energy_total  -> 9482.63
 ```
 
-Using a retained MQTT message is recommended so the last known power value is available immediately after Homebridge reconnects.
+## v0.2 schema migration
+
+v0.2 adds the energy cluster and voltage/current attributes to every virtual accessory so the Matter endpoint shape remains stable when optional topics are added later.
+
+To avoid Apple/Homebridge retaining the older v0.1 endpoint shape, v0.2 uses a new internal accessory identity. Existing v0.1 virtual outlets will therefore be removed and recreated once when upgrading. The Matter child bridge itself remains the same; normally it does not need to be paired again.
 
 ## Current scope
 
-Implemented in the first proof of concept:
+Implemented:
 
-- multiple virtual power devices
+- multiple virtual electrical devices
 - MQTT input
 - MQTT username/password
-- optional per-device multiplier
+- active power in W
+- voltage in V
+- active current in A
+- cumulative imported energy in Wh/kWh
+- cumulative exported energy in Wh/kWh
+- optional per-measurement multipliers
 - native Matter `ElectricalPowerMeasurement`
+- native Matter `ElectricalEnergyMeasurement`
 - outlet device type for Apple Home live-watt display
 - Homebridge Matter accessory cache handling
 
 Not implemented yet:
 
-- cumulative energy / kWh
-- voltage and current
+- periodic energy intervals / historical interval data
 - battery state of charge
 - native Matter Solar Power / Battery Storage device types
 - JSON payload extraction
