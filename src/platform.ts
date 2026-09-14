@@ -39,7 +39,6 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
   private readonly devicesByTopic = new Map<string, RuntimePowerDevice[]>();
   private readonly lastMilliWatts = new Map<string, number>();
   private mqttClient?: MqttClient;
-  private stopped = false;
 
   constructor(
     private readonly log: Logging,
@@ -126,6 +125,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       manufacturer: 'homebridge-matter-power',
       model: 'Virtual MQTT Power',
       serialNumber: `HMP-${device.uuid.replace(/-/g, '').slice(0, 12).toUpperCase()}`,
+      context: {},
       clusters: {
         onOff: { onOff: true },
         electricalPowerMeasurement: { activePower: 0 },
@@ -258,7 +258,6 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
   }
 
   private stop(): void {
-    this.stopped = true;
     if (this.mqttClient) {
       this.mqttClient.end(true);
       this.mqttClient = undefined;
