@@ -15,8 +15,9 @@ Supported measurements:
 - active current (`ElectricalPowerMeasurement.activeCurrent`)
 - cumulative imported/consumed energy (`ElectricalEnergyMeasurement.cumulativeEnergyImported`)
 - cumulative exported/returned energy (`ElectricalEnergyMeasurement.cumulativeEnergyExported`)
+- experimental battery state of charge (`PowerSource.batPercentRemaining`)
 
-Matter uses milli-units internally. The plugin converts W/V/A/Wh/kWh automatically before publishing to Matter.
+Matter uses milli-units internally for the electrical measurements. Battery SoC is converted from 0-100% to Matter's 0-200 `batPercentRemaining` scale.
 
 Example:
 
@@ -112,6 +113,25 @@ A bidirectional grid meter can expose both cumulative directions:
 }
 ```
 
+A battery can additionally expose SoC:
+
+```json
+{
+  "id": "byd",
+  "name": "BYD Speicher",
+  "topic": "home/battery/power",
+  "batterySocTopic": "home/battery/soc"
+}
+```
+
+The SoC topic must publish a numeric value from `0` to `100`. Example:
+
+```text
+home/battery/soc -> 73.5
+```
+
+which becomes Matter `batPercentRemaining = 147`.
+
 Optional MQTT authentication:
 
 ```json
@@ -149,6 +169,14 @@ Use a **monotonically increasing cumulative energy counter**. Do not feed a dail
 
 Using an explicit `id` is recommended because it keeps the Matter accessory identity stable when MQTT topics are changed later.
 
+## Battery SoC notes
+
+Battery SoC support is experimental. Homebridge 2.4 exposes the standard Matter `PowerSource` cluster and automatically composes the required battery/rechargeable Matter features when a battery attribute is present.
+
+Only devices with `batterySocTopic` get a `PowerSource` cluster. Existing non-battery accessories therefore keep their current Matter identity. Adding or removing `batterySocTopic` intentionally changes the accessory identity once so controllers discover the battery capability from a fresh endpoint.
+
+Apple Home support for `batPercentRemaining` on bridged Matter accessories is currently limited. The initial value may be visible while later percentage updates can lag or remain stale because of controller/reporting behavior. The plugin still sends every changed SoC value to Homebridge/Matter and logs the first successfully published value.
+
 ## Node-RED
 
 Publish numeric values to the configured MQTT topics. Retained MQTT messages are recommended so Homebridge receives the most recent values immediately after reconnecting.
@@ -160,6 +188,8 @@ home/house/power         -> 1842
 home/house/voltage       -> 231.4
 home/house/current       -> 7.9
 home/house/energy_total  -> 9482.63
+home/battery/power       -> -2480
+home/battery/soc         -> 73.5
 ```
 
 ## v0.2 schema migration
@@ -167,6 +197,10 @@ home/house/energy_total  -> 9482.63
 v0.2 adds the energy cluster and voltage/current attributes to every virtual accessory so the Matter endpoint shape remains stable when optional topics are added later.
 
 To avoid Apple/Homebridge retaining the older v0.1 endpoint shape, v0.2 uses a new internal accessory identity. Existing v0.1 virtual outlets will therefore be removed and recreated once when upgrading. The Matter child bridge itself remains the same; normally it does not need to be paired again.
+
+## v0.3 battery support
+
+v0.3 adds optional `batterySocTopic` support through Matter `PowerSource.batPercentRemaining`. Non-battery accessories keep the v0.2/v0.2.1 identity. Battery-enabled accessories use a separate battery schema identity so Apple/Homebridge discovers the additional PowerSource capability on a newly created endpoint.
 
 ## Current scope
 
@@ -180,17 +214,19 @@ Implemented:
 - active current in A
 - cumulative imported energy in Wh/kWh
 - cumulative exported energy in Wh/kWh
+- experimental battery SoC in percent
 - optional per-measurement multipliers
 - native Matter `ElectricalPowerMeasurement`
 - native Matter `ElectricalEnergyMeasurement`
+- native Matter `PowerSource` for battery-enabled accessories
 - outlet device type for Apple Home live-watt display
 - Homebridge Matter accessory cache handling
 
 Not implemented yet:
 
 - periodic energy intervals / historical interval data
-- battery state of charge
 - native Matter Solar Power / Battery Storage device types
+- battery charge/discharge state
 - JSON payload extraction
 - npm publishing
 
