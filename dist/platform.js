@@ -1,7 +1,7 @@
 import { connect } from 'mqtt';
 import { MIN_HOMEBRIDGE_VERSION, PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 const DEFAULT_MQTT_URL = 'mqtt://127.0.0.1:1883';
-const ACCESSORY_SCHEMA_VERSION = 'v2';
+const ACCESSORY_SCHEMA_VERSION = 'v3';
 function optionalTopic(value) {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -18,6 +18,7 @@ export class MatterPowerPlatform {
     cachedMatterAccessories = new Map();
     bindingsByTopic = new Map();
     lastMatterValues = new Map();
+    firstLoggedValues = new Set();
     mqttClient;
     constructor(log, platformConfig, api) {
         this.log = log;
@@ -98,8 +99,8 @@ export class MatterPowerPlatform {
                     activeCurrent: null,
                 },
                 electricalEnergyMeasurement: {
-                    cumulativeEnergyImported: null,
-                    cumulativeEnergyExported: null,
+                    cumulativeEnergyImported: { energy: 0 },
+                    cumulativeEnergyExported: { energy: 0 },
                 },
             },
         };
@@ -250,7 +251,13 @@ export class MatterPowerPlatform {
         try {
             await this.matter.updateAccessoryState(device.uuid, cluster, state);
             this.lastMatterValues.set(cacheKey, matterValue);
-            this.log.debug(`${device.name} ${kind}: ${logValue}`);
+            if (!this.firstLoggedValues.has(cacheKey)) {
+                this.firstLoggedValues.add(cacheKey);
+                this.log.info(`${device.name} ${kind}: ${logValue}`);
+            }
+            else {
+                this.log.debug(`${device.name} ${kind}: ${logValue}`);
+            }
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
