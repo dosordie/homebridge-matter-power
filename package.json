@@ -23,7 +23,6 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -44,9 +43,11 @@
     "LICENSE"
   ],
   "dependencies": {
+    "mqtt": "^5.14.1"
+  },
+  "devDependencies": {
     "@types/node": "^22.10.0",
     "homebridge": "^2.4.0",
-    "mqtt": "^5.14.1",
     "typescript": "^5.9.2"
   }
 }
