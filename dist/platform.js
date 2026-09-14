@@ -41,7 +41,9 @@ export class MatterPowerPlatform {
             this.stop();
         });
     }
+    /** This plugin publishes no HAP accessories. */
     configureAccessory() { }
+    /** Restore Matter accessories from Homebridge's cache on restart. */
     configureMatterAccessory(accessory) {
         this.cachedMatterAccessories.set(accessory.UUID, accessory);
     }
@@ -117,6 +119,7 @@ export class MatterPowerPlatform {
         }
         const desiredAccessories = devices.map((device) => this.buildAccessory(device));
         const desiredUuids = new Set(desiredAccessories.map((accessory) => accessory.UUID));
+        // Remove cached accessories which no longer exist in the configuration or use an older schema identity.
         const staleAccessories = [...this.cachedMatterAccessories.values()]
             .filter((accessory) => !desiredUuids.has(accessory.UUID));
         if (staleAccessories.length > 0) {
@@ -125,6 +128,7 @@ export class MatterPowerPlatform {
                 this.cachedMatterAccessories.delete(accessory.UUID);
             }
         }
+        // Cached Matter accessories are restored by Homebridge automatically. Register only new UUIDs.
         const newAccessories = desiredAccessories
             .filter((accessory) => !this.cachedMatterAccessories.has(accessory.UUID));
         if (newAccessories.length > 0) {
@@ -278,3 +282,4 @@ export class MatterPowerPlatform {
         }
     }
 }
+//# sourceMappingURL=platform.js.map
