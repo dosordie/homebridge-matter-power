@@ -1,0 +1,66 @@
+{
+  "pluginAlias": "MatterPower",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Matter-only plugin: publishes MQTT power values as native Matter ElectricalPowerMeasurement data. Enable Matter for this plugin's child bridge and pair the Matter QR code with Apple Home.",
+  "schema": {
+    "type": "object",
+    "required": ["name", "mqttUrl", "devices"],
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Matter Power"
+      },
+      "mqttUrl": {
+        "title": "MQTT broker URL",
+        "type": "string",
+        "default": "mqtt://127.0.0.1:1883",
+        "required": true
+      },
+      "mqttUsername": {
+        "title": "MQTT username",
+        "type": "string"
+      },
+      "mqttPassword": {
+        "title": "MQTT password",
+        "type": "string"
+      },
+      "devices": {
+        "title": "Power devices",
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "title": "Power device",
+          "type": "object",
+          "required": ["name", "topic"],
+          "properties": {
+            "id": {
+              "title": "Stable ID (optional)",
+              "type": "string",
+              "description": "Optional stable identity. If omitted, the MQTT topic is used. Set this before changing a topic if you want Apple Home to keep the same accessory."
+            },
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true,
+              "placeholder": "PV-Anlage"
+            },
+            "topic": {
+              "title": "MQTT topic",
+              "type": "string",
+              "required": true,
+              "placeholder": "home/pv/power"
+            },
+            "multiplier": {
+              "title": "Multiplier",
+              "type": "number",
+              "default": 1,
+              "description": "Multiply the numeric MQTT payload by this value before publishing watts. Example: use 1000 if the topic is in kW."
+            }
+          }
+        }
+      }
+    }
+  }
+}
