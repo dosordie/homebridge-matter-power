@@ -56,7 +56,7 @@ interface MatterPowerConfig extends PlatformConfig {
 }
 
 const DEFAULT_MQTT_URL = 'mqtt://127.0.0.1:1883';
-const ACCESSORY_SCHEMA_VERSION = 'v2';
+const ACCESSORY_SCHEMA_VERSION = 'v3';
 
 function optionalTopic(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -75,6 +75,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
   private readonly cachedMatterAccessories = new Map<string, MatterAccessory>();
   private readonly bindingsByTopic = new Map<string, TopicBinding[]>();
   private readonly lastMatterValues = new Map<string, number>();
+  private readonly firstLoggedValues = new Set<string>();
   private mqttClient?: MqttClient;
 
   constructor(
@@ -176,8 +177,8 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
           activeCurrent: null,
         },
         electricalEnergyMeasurement: {
-          cumulativeEnergyImported: null,
-          cumulativeEnergyExported: null,
+          cumulativeEnergyImported: { energy: 0 },
+          cumulativeEnergyExported: { energy: 0 },
         },
       },
     };
@@ -344,7 +345,12 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
     try {
       await this.matter.updateAccessoryState(device.uuid, cluster, state);
       this.lastMatterValues.set(cacheKey, matterValue);
-      this.log.debug(`${device.name} ${kind}: ${logValue}`);
+      if (!this.firstLoggedValues.has(cacheKey)) {
+        this.firstLoggedValues.add(cacheKey);
+        this.log.info(`${device.name} ${kind}: ${logValue}`);
+      } else {
+        this.log.debug(`${device.name} ${kind}: ${logValue}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.log.error(`Failed to update '${device.name}' ${kind} Matter state: ${message}`);
