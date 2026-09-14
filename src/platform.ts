@@ -11,7 +11,7 @@ import type {
 import { MIN_HOMEBRIDGE_VERSION, PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 type EnergyUnit = 'Wh' | 'kWh';
-type MeasurementKind = 'power' | 'voltage' | 'current' | 'energyImported' | 'energyExported';
+type MeasurementKind = 'power' | 'voltage' | 'current' | 'energyImported' | 'energyExported' | 'batterySoc';
 
 interface PowerDeviceConfig {
   id?: string;
@@ -26,6 +26,7 @@ interface PowerDeviceConfig {
   energyImportedUnit?: EnergyUnit;
   energyExportedTopic?: string;
   energyExportedUnit?: EnergyUnit;
+  batterySocTopic?: string;
 }
 
 interface RuntimePowerDevice {
@@ -41,6 +42,7 @@ interface RuntimePowerDevice {
   energyImportedUnit: EnergyUnit;
   energyExportedTopic?: string;
   energyExportedUnit: EnergyUnit;
+  batterySocTopic?: string;
 }
 
 interface TopicBinding {
@@ -57,6 +59,7 @@ interface MatterPowerConfig extends PlatformConfig {
 
 const DEFAULT_MQTT_URL = 'mqtt://127.0.0.1:1883';
 const ACCESSORY_SCHEMA_VERSION = 'v3';
+const BATTERY_SCHEMA_VERSION = 'v1';
 
 function optionalTopic(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -129,6 +132,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
       const topic = typeof raw?.topic === 'string' ? raw.topic.trim() : '';
       const id = typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : topic;
+      const batterySocTopic = optionalTopic(raw.batterySocTopic);
 
       if (!name || !topic || !id) {
         this.log.warn('Skipping a device with missing name/topic.');
@@ -141,8 +145,12 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       }
       seenIds.add(id);
 
+      const identity = batterySocTopic
+        ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
+        : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
+
       devices.push({
-        uuid: this.matter.uuid.generate(`${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`),
+        uuid: this.matter.uuid.generate(identity),
         name,
         topic,
         multiplier: positiveMultiplier(raw.multiplier),
@@ -154,6 +162,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         energyImportedUnit: energyUnit(raw.energyImportedUnit),
         energyExportedTopic: optionalTopic(raw.energyExportedTopic),
         energyExportedUnit: energyUnit(raw.energyExportedUnit),
+        batterySocTopic,
       });
     }
 
@@ -168,7 +177,10 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       manufacturer: 'homebridge-matter-power',
       model: 'Virtual MQTT Power',
       serialNumber: `HMP-${device.uuid.replace(/-/g, '').slice(0, 12).toUpperCase()}`,
-      context: { schemaVersion: ACCESSORY_SCHEMA_VERSION },
+      context: {
+        schemaVersion: ACCESSORY_SCHEMA_VERSION,
+        batterySchemaVersion: device.batterySocTopic ? BATTERY_SCHEMA_VERSION : undefined,
+      },
       clusters: {
         onOff: { onOff: true },
         electricalPowerMeasurement: {
@@ -180,6 +192,12 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
           cumulativeEnergyImported: { energy: 0 },
           cumulativeEnergyExported: { energy: 0 },
         },
+        ...(device.batterySocTopic ? {
+          powerSource: {
+            batPercentRemaining: 0,
+            batPresent: true,
+          },
+        } : {}),
       },
     };
   }
@@ -230,6 +248,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       this.addBinding(device.currentTopic, device, 'current');
       this.addBinding(device.energyImportedTopic, device, 'energyImported');
       this.addBinding(device.energyExportedTopic, device, 'energyExported');
+      this.addBinding(device.batterySocTopic, device, 'batterySoc');
     }
 
     this.connectMqtt(config);
@@ -333,6 +352,20 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
           ? { cumulativeEnergyImported: { energy: matterValue } }
           : { cumulativeEnergyExported: { energy: matterValue } };
         logValue = `${rawValue} ${unit}`;
+        break;
+      }
+      case 'batterySoc': {
+        if (rawValue < 0 || rawValue > 100) {
+          this.log.warn(`Ignoring battery SoC outside 0..100 for '${device.name}': ${rawValue} %`);
+          return;
+        }
+        matterValue = this.toSafeInteger(rawValue * 2, `battery SoC for '${device.name}'`);
+        cluster = this.matter.clusterNames.PowerSource;
+        state = {
+          batPercentRemaining: matterValue,
+          batPresent: true,
+        };
+        logValue = `${rawValue} %`;
         break;
       }
     }
