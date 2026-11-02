@@ -250,12 +250,13 @@ The input topic is positive **generation** in watts. Matter reports outgoing gen
   "topic": "home/byd/ac_power",
   "batterySocTopic": "home/byd/soc",
   "batteryDcPowerTopic": "home/byd/dc_power",
+  "batteryCapacityMah": 25000,
   "energyImportedTopic": "home/byd/charged_total",
   "energyExportedTopic": "home/byd/discharged_total"
 }
 ```
 
-Battery power convention: **positive = charging; negative = discharging**. `batteryDcPowerTopic` and energy totals are optional; unknown DC/energy values remain null rather than being fabricated. The composed device includes battery and wired AC PowerSource parts, plus AC and DC ElectricalSensor parts. There is **no DeviceEnergyManagement control part**, because this plugin does not implement charging/discharging commands. The SoC is sent to the `battery` PowerSource part with 0.5% resolution.
+Battery power convention: **positive = charging; negative = discharging**. `batteryCapacityMah` is required because Matter mandates a rated battery capacity. The example `25000` means 25 Ah at pack voltage (approximately BYD HVS capacity); it is **not** 25000 kWh. `batteryDcPowerTopic` and energy totals are optional; unknown DC/energy values remain null rather than being fabricated. The composed device includes battery and wired AC PowerSource parts, plus AC and DC ElectricalSensor parts. There is **no DeviceEnergyManagement control part**, because this plugin does not implement charging/discharging commands. The SoC is sent to the `battery` PowerSource part with 0.5% resolution.
 
 Do **not** repurpose a live inverter's PV production counter as a battery charge counter. Select the topics corresponding to the actual measurement direction.
 
