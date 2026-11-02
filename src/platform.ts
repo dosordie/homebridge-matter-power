@@ -381,7 +381,8 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
                   esaState: 1, // Online; does not imply charge/discharge control.
                   // Matter requires non-null limits. 0 is a test fallback only;
                   // configure the physical limits for accurate reporting.
-                  absMinPower: -Math.round((device.batteryMaxDischargePowerW ?? 0) * 1000),
+                  absMinPower: device.batteryMaxDischargePowerW
+                    ? -Math.round(device.batteryMaxDischargePowerW * 1000) : 0,
                   absMaxPower: Math.round((device.batteryMaxChargePowerW ?? 0) * 1000),
                 },
               },
