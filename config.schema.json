@@ -162,6 +162,12 @@
               "type": "number",
               "minimum": 0,
               "description": "Optional native BatteryStorage real maximum discharging power from battery, in watts. Used by mandatory read-only DeviceEnergyManagement. If absent, zero W is reported as test-only placeholder."
+            },
+            "batteryAdjustmentTestMode": {
+              "title": "SIMULATION: Battery adjustment control UI test (no MQTT writes)",
+              "type": "boolean",
+              "default": false,
+              "description": "Advanced test ONLY for native BatteryStorage. Advertises a synthetic ±1000 W adjustment capability to probe Matter controllers. ALL control requests fail; no MQTT commands are sent. Changes this device's Matter identity; turning off recreates its normal endpoint. Leave false for normal use."
             }
           }
         }
