@@ -2,10 +2,14 @@
   "pluginAlias": "MatterPower",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Matter-only plugin: publishes MQTT values as native Matter electrical power/energy measurements and optional experimental battery SoC. Enable Matter for this plugin's child bridge and pair the Matter QR code with Apple Home.",
+  "headerDisplay": "Matter-only MQTT measurements. The default outlet remains backward compatible. Native Electrical Meter, Electrical Sensor, Solar Power and Battery Storage types require Homebridge 2.5.0+ and are experimental in Apple Home. Each device remains behind the Matter bridge; standalone publishing is not supported by Homebridge's public API.",
   "schema": {
     "type": "object",
-    "required": ["name", "mqttUrl", "devices"],
+    "required": [
+      "name",
+      "mqttUrl",
+      "devices"
+    ],
     "properties": {
       "name": {
         "title": "Name",
@@ -33,7 +37,10 @@
         "items": {
           "title": "Electrical device",
           "type": "object",
-          "required": ["name", "topic"],
+          "required": [
+            "name",
+            "topic"
+          ],
           "properties": {
             "id": {
               "title": "Stable ID (optional)",
@@ -45,6 +52,19 @@
               "type": "string",
               "required": true,
               "placeholder": "Hausverbrauch"
+            },
+            "deviceType": {
+              "title": "Matter device type (experimental)",
+              "type": "string",
+              "enum": [
+                "outlet",
+                "electricalSensor",
+                "electricalMeter",
+                "solarPower",
+                "batteryStorage"
+              ],
+              "default": "outlet",
+              "description": "outlet preserves previous pairing and Apple Home watt display. Native types need Homebridge 2.5+. Solar Power requires energyExportedTopic; Battery Storage requires batterySocTopic; Electrical Meter requires a cumulative energy topic. Battery Storage also requires batteryCapacityMah."
             },
             "topic": {
               "title": "Power topic",
@@ -63,7 +83,7 @@
               "title": "Voltage topic (optional)",
               "type": "string",
               "placeholder": "home/grid/voltage",
-              "description": "Numeric MQTT payload containing voltage in V."
+              "description": "Numeric MQTT payload with AC voltage in V. For SolarPower this must describe the PV inverter AC output, not the grid connection's net power."
             },
             "voltageMultiplier": {
               "title": "Voltage multiplier",
@@ -75,7 +95,7 @@
               "title": "Current topic (optional)",
               "type": "string",
               "placeholder": "home/grid/current",
-              "description": "Numeric MQTT payload containing current in A."
+              "description": "Signed active current in A. ElectricalSensor and ElectricalMeter preserve sign; SolarPower treats magnitude as outgoing PV current (negative Matter mA). Do not use household grid current as total PV current."
             },
             "currentMultiplier": {
               "title": "Current multiplier",
@@ -87,31 +107,171 @@
               "title": "Imported/consumed energy topic (optional)",
               "type": "string",
               "placeholder": "home/house/energy_total",
-              "description": "Monotonically increasing cumulative energy counter. Do not use a daily counter that resets to zero."
+              "description": "Monotonically increasing cumulative energy counter. Do not use a daily counter that resets to zero. For BatteryStorage: charging energy. For solarPower use energyExportedTopic instead."
             },
             "energyImportedUnit": {
               "title": "Imported energy unit",
               "type": "string",
               "default": "kWh",
-              "enum": ["Wh", "kWh"]
+              "enum": [
+                "Wh",
+                "kWh"
+              ]
             },
             "energyExportedTopic": {
               "title": "Exported/returned energy topic (optional)",
               "type": "string",
               "placeholder": "home/grid/export_total",
-              "description": "Monotonically increasing cumulative returned/exported energy counter."
+              "description": "Monotonically increasing LIFETIME exported energy in Wh or kWh. SolarPower: total PV generated, including self-consumption and battery charging; never the grid feed-in meter or a daily-reset yield."
             },
             "energyExportedUnit": {
               "title": "Exported energy unit",
               "type": "string",
               "default": "kWh",
-              "enum": ["Wh", "kWh"]
+              "enum": [
+                "Wh",
+                "kWh"
+              ]
             },
             "batterySocTopic": {
               "title": "Battery SoC topic (experimental)",
               "type": "string",
               "placeholder": "home/battery/soc",
-              "description": "Numeric MQTT payload from 0 to 100 percent. Exposed through Matter PowerSource.batPercentRemaining. Apple Home support for bridged battery updates may be limited."
+              "description": "Numeric MQTT payload from 0 to 100 percent. Valid only for default outlet and native batteryStorage; ignored with a warning on electricalMeter/electricalSensor/solarPower. Apple Home battery display/update support is limited."
+            },
+            "batteryDcPowerTopic": {
+              "title": "Battery DC power topic (optional)",
+              "type": "string",
+              "placeholder": "home/battery/dc_power",
+              "description": "For batteryStorage only. Signed battery DC power in watts, positive = charging, negative = discharging. Unknown if not provided."
+            },
+            "batteryCapacityMah": {
+              "title": "Battery rated capacity (mAh, native storage only)",
+              "type": "integer",
+              "minimum": 1,
+              "description": "Required when deviceType=batteryStorage. The physical pack's capacity in milliamp-hours (e.g. BYD HVS 12.8 kWh at nominal 512 V: 25000 mAh). Matter requires this value; do not enter kWh here."
+            },
+            "batteryMaxChargePowerW": {
+              "title": "Battery max charging power (W; native storage)",
+              "type": "number",
+              "minimum": 0,
+              "description": "Optional native BatteryStorage real maximum charging power into battery, in watts. Used by mandatory read-only DeviceEnergyManagement. If absent, zero W is reported as test-only placeholder."
+            },
+            "batteryMaxDischargePowerW": {
+              "title": "Battery max discharging power (W; native storage)",
+              "type": "number",
+              "minimum": 0,
+              "description": "Optional native BatteryStorage real maximum discharging power from battery, in watts. Used by mandatory read-only DeviceEnergyManagement. If absent, zero W is reported as test-only placeholder."
+            },
+            "batteryAdjustmentTestMode": {
+              "title": "SIMULATION: Battery adjustment control UI test (no MQTT writes)",
+              "type": "boolean",
+              "default": false,
+              "description": "Advanced test ONLY for native BatteryStorage. Advertises a synthetic ±1000 W adjustment capability to probe Matter controllers. ALL control requests fail; no MQTT commands are sent. Changes this device's Matter identity; turning off recreates its normal endpoint. Leave false for normal use."
+            },
+            "reactivePowerTopic": {
+              "title": "AC reactive power topic (optional)",
+              "type": "string",
+              "placeholder": "home/pv/reactive_var",
+              "description": "Signed reactive power in var; sent in milli-var. Available for AC ElectricalSensor/Meter and SolarPower. Use actual source readings; do not derive the sign."
+            },
+            "energyExportedDailyTopic": {
+              "title": "PV energy generated today topic (optional, SolarPower only)",
+              "type": "string",
+              "placeholder": "home/pv/energy_today_kwh",
+              "description": "SolarPower or ElectricalSensor. Periodic exported energy since local midnight, not the lifetime counter. On enabling, changes identity to advertise PeriodicEnergy."
+            },
+            "energyExportedDailyUnit": {
+              "title": "PV daily energy unit",
+              "type": "string",
+              "default": "kWh",
+              "enum": [
+                "Wh",
+                "kWh"
+              ],
+              "description": "Unit for energyExportedDailyTopic. Period is local midnight through the MQTT reading."
+            },
+            "reactiveCurrentTopic": {
+              "title": "Reactive current (A)",
+              "type": "string",
+              "placeholder": "home/meter/reactive_a",
+              "description": "Signed reactive current, amps; sent as Matter mA."
+            },
+            "apparentCurrentTopic": {
+              "title": "Apparent current (A)",
+              "type": "string",
+              "placeholder": "home/meter/apparent_a",
+              "description": "Signed apparent current, amps; sent as Matter mA."
+            },
+            "apparentPowerTopic": {
+              "title": "Apparent power (VA)",
+              "type": "string",
+              "placeholder": "home/meter/apparent_va",
+              "description": "Signed apparent power, volt-amperes; sent as Matter mVA."
+            },
+            "rmsVoltageTopic": {
+              "title": "RMS voltage (V)",
+              "type": "string",
+              "placeholder": "home/meter/rms_voltage_v",
+              "description": "Non-negative AC RMS voltage, sent as Matter mV."
+            },
+            "rmsCurrentTopic": {
+              "title": "RMS current (A)",
+              "type": "string",
+              "placeholder": "home/meter/rms_current_a",
+              "description": "Signed AC RMS current, sent as Matter mA."
+            },
+            "rmsPowerTopic": {
+              "title": "RMS power (W)",
+              "type": "string",
+              "placeholder": "home/meter/rms_power_w",
+              "description": "Signed AC RMS power, sent as Matter mW."
+            },
+            "frequencyTopic": {
+              "title": "Frequency (Hz)",
+              "type": "string",
+              "placeholder": "home/meter/frequency_hz",
+              "description": "Non-negative grid/inverter AC frequency (Hz); sent as Matter mHz."
+            },
+            "powerFactorTopic": {
+              "title": "Power factor (signed ratio)",
+              "type": "string",
+              "placeholder": "home/meter/power_factor",
+              "description": "Use signed ratio -1.0 to +1.0 (e.g. 0.98). Matter expects 1/100ths percent: 0.98 -> 9800."
+            },
+            "neutralCurrentTopic": {
+              "title": "Polyphase neutral current (A)",
+              "type": "string",
+              "placeholder": "home/meter/neutral_a",
+              "description": "ElectricalSensor only. Signed neutral current A; activates Matter PolyphasePower feature, recreating the endpoint identity."
+            },
+            "harmonicCurrentsTopic": {
+              "title": "Harmonic currents JSON array (A)",
+              "type": "string",
+              "placeholder": "home/meter/harmonics_current",
+              "description": "ElectricalSensor only. JSON array [{\"order\":3,\"measurement\":0.12}]; numeric measurement is A, sent as Matter mA. Activates Harmonics feature."
+            },
+            "harmonicPhasesTopic": {
+              "title": "Harmonic phases JSON array (degrees)",
+              "type": "string",
+              "placeholder": "home/meter/harmonics_phase",
+              "description": "ElectricalSensor only. JSON array [{\"order\":3,\"measurement\":12.5}]; numeric measurement is degrees, sent as Matter millidegrees. Activates PowerQuality feature."
+            },
+            "energyImportedDailyTopic": {
+              "title": "Imported energy today (ElectricalSensor)",
+              "type": "string",
+              "placeholder": "home/meter/import_today_kwh",
+              "description": "ElectricalSensor only. Non-negative amount since local midnight, NOT cumulative lifetime energy. Published as Matter PeriodicEnergyImported with timestamps. Changes device identity."
+            },
+            "energyImportedDailyUnit": {
+              "title": "Imported energy today unit",
+              "type": "string",
+              "enum": [
+                "Wh",
+                "kWh"
+              ],
+              "default": "kWh",
+              "description": "Unit for energyImportedDailyTopic (Wh/kWh)."
             }
           }
         }
