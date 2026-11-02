@@ -66,11 +66,19 @@ export class MatterPowerPlatform {
             const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
             const topic = typeof raw?.topic === 'string' ? raw.topic.trim() : '';
             const id = typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : topic;
-            const batterySocTopic = optionalTopic(raw.batterySocTopic);
+            const configuredBatterySocTopic = optionalTopic(raw.batterySocTopic);
             const selectedType = deviceType(raw.deviceType);
             if (!selectedType) {
                 this.log.warn(`Skipping '${name}': unsupported deviceType '${String(raw.deviceType)}'.`);
                 continue;
+            }
+            // Only outlets and actual BatteryStorage expose the battery PowerSource cluster.
+            // An ElectricalMeter/ElectricalSensor/SolarPower must never receive battery SoC updates.
+            const supportsBatterySoc = selectedType === 'outlet' || selectedType === 'batteryStorage';
+            const batterySocTopic = supportsBatterySoc ? configuredBatterySocTopic : undefined;
+            if (configuredBatterySocTopic && !supportsBatterySoc) {
+                this.log.warn(`Ignoring batterySocTopic for '${name}': ${selectedType} has no battery PowerSource. `
+                    + 'Use deviceType "batteryStorage" for a real battery or "outlet" for legacy battery status.');
             }
             if (selectedType !== 'outlet' && !this.api.versionGreaterOrEqual?.('2.5.0')) {
                 this.log.error(`Skipping '${name}': deviceType '${selectedType}' requires Homebridge 2.5.0+.`);
