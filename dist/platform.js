@@ -3,6 +3,7 @@ import { MIN_HOMEBRIDGE_VERSION, PLATFORM_NAME, PLUGIN_NAME } from './settings.j
 const DEFAULT_MQTT_URL = 'mqtt://127.0.0.1:1883';
 const ACCESSORY_SCHEMA_VERSION = 'v3';
 const BATTERY_SCHEMA_VERSION = 'v1';
+const NATIVE_SCHEMA_VERSION = 'v1';
 function optionalTopic(value) {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -11,6 +12,14 @@ function positiveMultiplier(value) {
 }
 function energyUnit(value) {
     return value === 'Wh' ? 'Wh' : 'kWh';
+}
+function deviceType(value) {
+    if (value === undefined || value === 'outlet')
+        return 'outlet';
+    if (value === 'electricalSensor' || value === 'electricalMeter'
+        || value === 'solarPower' || value === 'batteryStorage')
+        return value;
+    return undefined;
 }
 export class MatterPowerPlatform {
     log;
@@ -58,6 +67,28 @@ export class MatterPowerPlatform {
             const topic = typeof raw?.topic === 'string' ? raw.topic.trim() : '';
             const id = typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : topic;
             const batterySocTopic = optionalTopic(raw.batterySocTopic);
+            const selectedType = deviceType(raw.deviceType);
+            if (!selectedType) {
+                this.log.warn(`Skipping '${name}': unsupported deviceType '${String(raw.deviceType)}'.`);
+                continue;
+            }
+            if (selectedType !== 'outlet' && !this.api.versionGreaterOrEqual?.('2.5.0')) {
+                this.log.error(`Skipping '${name}': deviceType '${selectedType}' requires Homebridge 2.5.0+.`);
+                continue;
+            }
+            if (selectedType === 'solarPower' && !optionalTopic(raw.energyExportedTopic)) {
+                this.log.error(`Skipping '${name}': solarPower requires energyExportedTopic (total generation).`);
+                continue;
+            }
+            if (selectedType === 'batteryStorage' && !batterySocTopic) {
+                this.log.error(`Skipping '${name}': batteryStorage requires batterySocTopic.`);
+                continue;
+            }
+            if (selectedType === 'electricalMeter'
+                && !optionalTopic(raw.energyImportedTopic) && !optionalTopic(raw.energyExportedTopic)) {
+                this.log.error(`Skipping '${name}': electricalMeter requires an imported or exported cumulative energy topic.`);
+                continue;
+            }
             if (!name || !topic || !id) {
                 this.log.warn('Skipping a device with missing name/topic.');
                 continue;
@@ -67,13 +98,17 @@ export class MatterPowerPlatform {
                 continue;
             }
             seenIds.add(id);
-            const identity = batterySocTopic
-                ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
-                : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
+            // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
+            const identity = selectedType !== 'outlet'
+                ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}:${selectedType}:${id}`
+                : batterySocTopic
+                    ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
+                    : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
             devices.push({
                 uuid: this.matter.uuid.generate(identity),
                 name,
                 topic,
+                deviceType: selectedType,
                 multiplier: positiveMultiplier(raw.multiplier),
                 voltageTopic: optionalTopic(raw.voltageTopic),
                 voltageMultiplier: positiveMultiplier(raw.voltageMultiplier),
@@ -84,41 +119,146 @@ export class MatterPowerPlatform {
                 energyExportedTopic: optionalTopic(raw.energyExportedTopic),
                 energyExportedUnit: energyUnit(raw.energyExportedUnit),
                 batterySocTopic,
+                batteryDcPowerTopic: optionalTopic(raw.batteryDcPowerTopic),
             });
         }
         return devices;
     }
     buildAccessory(device) {
-        return {
+        const types = this.matter.deviceTypes;
+        const base = {
             UUID: device.uuid,
             displayName: device.name,
-            deviceType: this.matter.deviceTypes.OnOffOutlet,
             manufacturer: 'homebridge-matter-power',
-            model: 'Virtual MQTT Power',
+            model: `Virtual MQTT ${device.deviceType}`,
             serialNumber: `HMP-${device.uuid.replace(/-/g, '').slice(0, 12).toUpperCase()}`,
             context: {
                 schemaVersion: ACCESSORY_SCHEMA_VERSION,
                 batterySchemaVersion: device.batterySocTopic ? BATTERY_SCHEMA_VERSION : undefined,
-            },
-            clusters: {
-                onOff: { onOff: true },
-                electricalPowerMeasurement: {
-                    activePower: 0,
-                    voltage: null,
-                    activeCurrent: null,
-                },
-                electricalEnergyMeasurement: {
-                    cumulativeEnergyImported: { energy: 0 },
-                    cumulativeEnergyExported: { energy: 0 },
-                },
-                ...(device.batterySocTopic ? {
-                    powerSource: {
-                        batPercentRemaining: 0,
-                        batPresent: true,
-                    },
-                } : {}),
+                deviceType: device.deviceType,
             },
         };
+        const electricalPowerMeasurement = {
+            activePower: 0,
+            voltage: null,
+            activeCurrent: null,
+        };
+        const nativeEnergy = {
+            ...(device.energyImportedTopic ? { cumulativeEnergyImported: { energy: 0 } } : {}),
+            ...(device.energyExportedTopic ? { cumulativeEnergyExported: { energy: 0 } } : {}),
+        };
+        const electricalEnergyMeasurement = device.deviceType === 'outlet'
+            ? { cumulativeEnergyImported: { energy: 0 }, cumulativeEnergyExported: { energy: 0 } }
+            : nativeEnergy;
+        switch (device.deviceType) {
+            case 'electricalMeter':
+            case 'electricalSensor':
+                return {
+                    ...base,
+                    deviceType: device.deviceType === 'electricalMeter'
+                        ? types.ElectricalMeter : types.ElectricalSensor,
+                    clusters: {
+                        electricalPowerMeasurement,
+                        ...(device.deviceType === 'electricalMeter' || Object.keys(nativeEnergy).length > 0
+                            ? { electricalEnergyMeasurement } : {}),
+                    },
+                };
+            case 'solarPower':
+                return {
+                    ...base,
+                    deviceType: types.SolarPower,
+                    parts: [
+                        {
+                            id: 'inverter',
+                            displayName: `${device.name} inverter`,
+                            deviceType: types.PowerSource,
+                            clusters: { powerSource: {
+                                    status: 1, order: 0, description: 'Solar inverter', wiredCurrentType: 0,
+                                } },
+                        },
+                        {
+                            id: 'meter',
+                            displayName: `${device.name} generation`,
+                            deviceType: types.ElectricalSensor,
+                            clusters: {
+                                electricalPowerMeasurement: { activePower: 0, voltage: null, activeCurrent: null },
+                                electricalEnergyMeasurement: {
+                                    cumulativeEnergyExported: { energy: 0 },
+                                },
+                            },
+                        },
+                    ],
+                };
+            case 'batteryStorage':
+                return {
+                    ...base,
+                    deviceType: types.BatteryStorage,
+                    parts: [
+                        {
+                            id: 'battery',
+                            displayName: `${device.name} battery`,
+                            deviceType: types.PowerSource,
+                            clusters: { powerSource: {
+                                    status: 1, order: 0, description: 'Battery',
+                                    batPresent: true, batPercentRemaining: 0,
+                                    batChargeLevel: 0, batReplacementNeeded: false,
+                                    batReplaceability: 3, batChargeState: 0,
+                                    batFunctionalWhileCharging: true,
+                                    batVoltage: null,
+                                    batTimeRemaining: null, batTimeToFullCharge: null,
+                                    batChargingCurrent: null, activeBatFaults: [], activeBatChargeFaults: [],
+                                } },
+                        },
+                        {
+                            id: 'grid',
+                            displayName: `${device.name} AC connection`,
+                            deviceType: types.PowerSource,
+                            clusters: { powerSource: {
+                                    status: 1, order: 1, description: 'AC connection', wiredCurrentType: 0,
+                                } },
+                        },
+                        {
+                            id: 'ac-meter',
+                            displayName: `${device.name} AC measurement`,
+                            deviceType: types.ElectricalSensor,
+                            clusters: {
+                                electricalPowerMeasurement,
+                                electricalEnergyMeasurement: Object.keys(nativeEnergy).length > 0
+                                    ? nativeEnergy
+                                    : { cumulativeEnergyImported: null, cumulativeEnergyExported: null },
+                            },
+                        },
+                        {
+                            id: 'dc-meter',
+                            displayName: `${device.name} DC measurement`,
+                            deviceType: types.ElectricalSensor,
+                            clusters: {
+                                electricalPowerMeasurement: {
+                                    powerMode: 1, activePower: null, voltage: null, activeCurrent: null,
+                                },
+                                electricalEnergyMeasurement: {
+                                    cumulativeEnergyImported: null, cumulativeEnergyExported: null,
+                                },
+                            },
+                        },
+                    ],
+                };
+            default:
+                // Preserve the v0.3 OnOffOutlet endpoint structure exactly.
+                return {
+                    ...base,
+                    deviceType: types.OnOffOutlet,
+                    clusters: {
+                        onOff: { onOff: true },
+                        electricalPowerMeasurement,
+                        electricalEnergyMeasurement,
+                        ...(device.batterySocTopic ? { powerSource: {
+                                batPercentRemaining: 0,
+                                batPresent: true,
+                            } } : {}),
+                    },
+                };
+        }
     }
     addBinding(topic, device, kind) {
         if (!topic)
@@ -144,17 +284,9 @@ export class MatterPowerPlatform {
                 this.cachedMatterAccessories.delete(accessory.UUID);
             }
         }
-        // Cached Matter accessories are restored by Homebridge automatically. Register only new UUIDs.
-        const newAccessories = desiredAccessories
-            .filter((accessory) => !this.cachedMatterAccessories.has(accessory.UUID));
-        if (newAccessories.length > 0) {
-            await this.matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, newAccessories);
-        }
-        const existingAccessories = desiredAccessories
-            .filter((accessory) => this.cachedMatterAccessories.has(accessory.UUID));
-        if (existingAccessories.length > 0) {
-            await this.matter.updatePlatformAccessories(existingAccessories);
-        }
+        // Homebridge 2.5 requires *all* accessories to re-register, even cached ones.
+        // It reuses their endpoints and restores handlers/features without replacing their identity.
+        await this.matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, desiredAccessories);
         for (const device of devices) {
             this.addBinding(device.topic, device, 'power');
             this.addBinding(device.voltageTopic, device, 'voltage');
@@ -162,6 +294,9 @@ export class MatterPowerPlatform {
             this.addBinding(device.energyImportedTopic, device, 'energyImported');
             this.addBinding(device.energyExportedTopic, device, 'energyExported');
             this.addBinding(device.batterySocTopic, device, 'batterySoc');
+            if (device.deviceType === 'batteryStorage') {
+                this.addBinding(device.batteryDcPowerTopic, device, 'batteryDcPower');
+            }
         }
         this.connectMqtt(config);
     }
@@ -209,9 +344,15 @@ export class MatterPowerPlatform {
         let state;
         let matterValue;
         let logValue;
+        let partId;
         switch (kind) {
             case 'power': {
-                const watts = rawValue * device.multiplier;
+                // Matter reports outgoing PV generation as negative power.
+                const watts = device.deviceType === 'solarPower'
+                    ? -Math.abs(rawValue * device.multiplier)
+                    : rawValue * device.multiplier;
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
                 matterValue = this.toSafeInteger(watts * 1000, `power value for '${device.name}'`);
                 cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
                 state = { activePower: matterValue };
@@ -219,6 +360,8 @@ export class MatterPowerPlatform {
                 break;
             }
             case 'voltage': {
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
                 const volts = rawValue * device.voltageMultiplier;
                 if (volts < 0) {
                     this.log.warn(`Ignoring negative voltage for '${device.name}': ${volts} V`);
@@ -231,6 +374,8 @@ export class MatterPowerPlatform {
                 break;
             }
             case 'current': {
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
                 const amps = rawValue * device.currentMultiplier;
                 if (amps < 0) {
                     this.log.warn(`Ignoring negative current for '${device.name}': ${amps} A`);
@@ -248,6 +393,8 @@ export class MatterPowerPlatform {
                     this.log.warn(`Ignoring negative cumulative energy for '${device.name}': ${rawValue}`);
                     return;
                 }
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
                 const unit = kind === 'energyImported' ? device.energyImportedUnit : device.energyExportedUnit;
                 const milliWh = rawValue * (unit === 'kWh' ? 1_000_000 : 1000);
                 matterValue = this.toSafeInteger(milliWh, `energy value for '${device.name}'`);
@@ -265,11 +412,20 @@ export class MatterPowerPlatform {
                 }
                 matterValue = this.toSafeInteger(rawValue * 2, `battery SoC for '${device.name}'`);
                 cluster = this.matter.clusterNames.PowerSource;
+                partId = device.deviceType === 'batteryStorage' ? 'battery' : undefined;
                 state = {
                     batPercentRemaining: matterValue,
                     batPresent: true,
                 };
                 logValue = `${rawValue} %`;
+                break;
+            }
+            case 'batteryDcPower': {
+                matterValue = this.toSafeInteger(rawValue * 1000, `DC power for '${device.name}'`);
+                cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
+                state = { activePower: matterValue };
+                partId = 'dc-meter';
+                logValue = `${rawValue} W (DC)`;
                 break;
             }
         }
@@ -279,7 +435,7 @@ export class MatterPowerPlatform {
         if (this.lastMatterValues.get(cacheKey) === matterValue)
             return;
         try {
-            await this.matter.updateAccessoryState(device.uuid, cluster, state);
+            await this.matter.updateAccessoryState(device.uuid, cluster, state, partId);
             this.lastMatterValues.set(cacheKey, matterValue);
             if (!this.firstLoggedValues.has(cacheKey)) {
                 this.firstLoggedValues.add(cacheKey);
