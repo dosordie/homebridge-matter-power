@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -24,16 +24,7 @@ jobs:
         run: npm install
       - name: Build
         run: npm run build
-      - name: Sync built dist (temporary development step)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/native-energy-0.4' && matrix.node-version == 22
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dist
-          if ! git diff --staged --quiet; then
-            git commit -m "build: generate v0.4.0 dist"
-            git push origin HEAD:feature/native-energy-0.4
-          fi
+      - name: Test
+        run: node --test
       - name: Verify committed dist
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/native-energy-0.4' && matrix.node-version == 24
-        run: echo "Check after generated dist is committed"
+        run: git diff --exit-code -- dist
