@@ -178,6 +178,118 @@ test('PV daily yield topic is not routed onto a grid meter', () => {
   assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('Ignoring energyExportedDailyTopic')));
 });
 
+test('ElectricalSensor maps all standard AC scalar meter topics to Matter units', async () => {
+  const { instance, calls, messages } = platform();
+  const [sensor] = instance.parseDevices({ devices: [{
+    id: 'ac-sensor', name: 'AC Sensor', deviceType: 'electricalSensor', topic: 'ac/w',
+    voltageTopic: 'ac/v', currentTopic: 'ac/i',
+    reactivePowerTopic: 'ac/q', reactiveCurrentTopic: 'ac/iq',
+    apparentCurrentTopic: 'ac/is', apparentPowerTopic: 'ac/s',
+    rmsVoltageTopic: 'ac/vrms', rmsCurrentTopic: 'ac/irms',
+    rmsPowerTopic: 'ac/wrms', frequencyTopic: 'ac/hz',
+    powerFactorTopic: 'ac/pf',
+    energyImportedTopic: 'ac/in', energyExportedTopic: 'ac/out',
+  }] });
+  const a = instance.buildAccessory(sensor);
+  assert.equal(a.deviceType, 'ElectricalSensor');
+  assert.equal(a.clusters.electricalPowerMeasurement.frequency, null);
+  assert.equal(a.clusters.electricalPowerMeasurement.apparentPower, null);
+  assert.equal(a.clusters.electricalPowerMeasurement.powerFactor, null);
+  assert.ok(a.clusters.electricalEnergyMeasurement.cumulativeEnergyImported);
+  assert.ok(a.clusters.electricalEnergyMeasurement.cumulativeEnergyExported);
+  const values = [
+    ['power', -520, 'activePower', -520000],
+    ['voltage', 229.8, 'voltage', 229800],
+    ['current', -2.5, 'activeCurrent', -2500],
+    ['reactivePower', -31, 'reactivePower', -31000],
+    ['reactiveCurrent', -0.7, 'reactiveCurrent', -700],
+    ['apparentCurrent', 2.6, 'apparentCurrent', 2600],
+    ['apparentPower', 610, 'apparentPower', 610000],
+    ['rmsVoltage', 231.2, 'rmsVoltage', 231200],
+    ['rmsCurrent', -3.2, 'rmsCurrent', -3200],
+    ['rmsPower', -510.5, 'rmsPower', -510500],
+    ['frequency', 49.97, 'frequency', 49970],
+    ['powerFactor', 0.96, 'powerFactor', 9600],
+  ];
+  for (const [kind, input, field, expected] of values) {
+    await instance.publishBinding({ device: sensor, kind }, input);
+    assert.deepEqual(calls[calls.length - 1],
+      [sensor.uuid, 'electricalPowerMeasurement', { [field]: expected }, undefined]);
+  }
+  assert.equal(calls.length, values.length);
+  await instance.publishBinding({ device: sensor, kind: 'powerFactor' }, 1.2);
+  await instance.publishBinding({ device: sensor, kind: 'frequency' }, -1);
+  await instance.publishBinding({ device: sensor, kind: 'rmsVoltage' }, -4);
+  assert.equal(calls.length, values.length);
+  assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('powerFactor outside')));
+});
+
+test('ElectricalSensor reports imported and exported energy for local-day periods', async () => {
+  const { instance, calls } = platform();
+  const base = {
+    id: 'sensor-periods', name: 'Meter', topic: 'm/p', deviceType: 'electricalSensor',
+  };
+  const [oldDevice] = instance.parseDevices({ devices: [base] });
+  const [d] = instance.parseDevices({ devices: [{
+    ...base, energyImportedDailyTopic: 'm/in/today', energyImportedDailyUnit: 'Wh',
+    energyExportedDailyTopic: 'm/out/today', energyExportedDailyUnit: 'kWh',
+  }] });
+  assert.notEqual(d.uuid, oldDevice.uuid);
+  const attr = instance.buildAccessory(d).clusters.electricalEnergyMeasurement;
+  assert.equal(attr.periodicEnergyImported, null);
+  assert.equal(attr.periodicEnergyExported, null);
+  assert.equal(attr.cumulativeEnergyImported, undefined);
+  await instance.publishBinding({device:d,kind:'energyImportedDaily'},1250);
+  await instance.publishBinding({device:d,kind:'energyExportedDaily'},3.5);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][2].periodicEnergyImported.energy, 1250000);
+  assert.equal(calls[1][2].periodicEnergyExported.energy, 3500000);
+  assert.equal(calls[0][2].periodicEnergyImported.startTimestamp,
+    calls[1][2].periodicEnergyExported.startTimestamp);
+  assert.equal(calls[0][3], undefined);
+  assert.equal(calls[1][3], undefined);
+});
+
+test('ElectricalSensor composes Matter Polyphase/Harmonics/PowerQuality features', async () => {
+  const { instance, calls, api, messages } = platform();
+  api.matter.deviceRequirements = {
+    ElectricalSensor: {
+      ElectricalPowerMeasurementServer: {
+        with: (...features) => ({ clusterName: 'electricalPowerMeasurement', features }),
+      },
+    },
+  };
+  api.matter.deviceTypes.ElectricalSensor = {
+    with: behavior => ({ name: 'ElectricalSensor', behavior }),
+  };
+  const [d] = instance.parseDevices({ devices: [{
+    id: 'advanced', name: 'Advanced', deviceType: 'electricalSensor', topic: 'a/w',
+    neutralCurrentTopic: 'a/neutral', harmonicCurrentsTopic: 'a/harmonic-i',
+    harmonicPhasesTopic: 'a/harmonic-phase',
+  }] });
+  const a = instance.buildAccessory(d);
+  assert.deepEqual(a.deviceType.behavior.features, [
+    'AlternatingCurrent', 'PolyphasePower', 'Harmonics', 'PowerQuality',
+  ]);
+  assert.equal(a.clusters.electricalPowerMeasurement.neutralCurrent, null);
+  assert.equal(a.clusters.electricalPowerMeasurement.harmonicCurrents, null);
+  assert.equal(a.clusters.electricalPowerMeasurement.harmonicPhases, null);
+  await instance.publishBinding({ device: d, kind: 'neutralCurrent' }, -1.25);
+  assert.deepEqual(calls[0][2], { neutralCurrent: -1250 });
+  await instance.publishHarmonics({ device: d, kind: 'harmonicCurrents' },
+    JSON.stringify([{ order: 3, measurement: 0.012 }, { order: 5, measurement: null }]));
+  assert.deepEqual(calls[1][2], {
+    harmonicCurrents: [{ order: 3, measurement: 12 }, { order: 5, measurement: null }],
+  });
+  await instance.publishHarmonics({ device: d, kind: 'harmonicPhases' },
+    JSON.stringify([{ order: 3, measurement: -7.5 }]));
+  assert.deepEqual(calls[2][2], { harmonicPhases: [{ order: 3, measurement: -7500 }] });
+  await instance.publishHarmonics({ device: d, kind: 'harmonicPhases' },
+    JSON.stringify([{ order: 3, measurement: 1 }, { order: 3, measurement: 4 }]));
+  assert.equal(calls.length, 3, 'duplicate harmonic order must be rejected');
+  assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('malformed harmonicPhases')));
+});
+
 test('battery storage routes SoC, AC and DC power and disables adjustment commands', async () => {
   const { instance, calls } = platform();
   const [d] = instance.parseDevices({ devices: [{
