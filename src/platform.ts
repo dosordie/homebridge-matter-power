@@ -140,6 +140,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
   private readonly bindingsByTopic = new Map<string, TopicBinding[]>();
   private readonly lastMatterValues = new Map<string, number>();
   private readonly lastDailyPeriodStart = new Map<string, number>();
+  private readonly lastHarmonicValues = new Map<string, string>();
   private readonly firstLoggedValues = new Set<string>();
   private mqttClient?: MqttClient;
 
@@ -858,6 +859,54 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
     }
   }
 
+  private async publishHarmonics(binding: TopicBinding, payload: string): Promise<void> {
+    const { device, kind } = binding;
+    if (device.deviceType !== 'electricalSensor') return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(payload);
+    } catch {
+      this.log.warn(`Ignoring invalid ${kind} JSON for '${device.name}'.`);
+      return;
+    }
+    // MQTT array: [{"order":3,"measurement":0.123},...].
+    // Values are amps (harmonicCurrents) or degrees (harmonicPhases).
+    // Matter uses milli-amps and milli-degrees.
+    if (!Array.isArray(raw) || raw.length > 128) {
+      this.log.warn(`Ignoring invalid ${kind} array for '${device.name}'.`);
+      return;
+    }
+    const orders = new Set<number>();
+    const measurements: Array<{ order: number; measurement: number | null }> = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object'
+        || !Number.isInteger(item.order) || item.order < 1 || item.order > 255
+        || orders.has(item.order)
+        || (item.measurement !== null
+          && (typeof item.measurement !== 'number' || !Number.isFinite(item.measurement)))) {
+        this.log.warn(`Ignoring malformed ${kind} harmonic entry for '${device.name}'.`);
+        return;
+      }
+      orders.add(item.order);
+      const value = item.measurement === null ? null
+        : this.toSafeInteger(item.measurement * 1000, `${kind} harmonic value for '${device.name}'`);
+      if (value === undefined) return;
+      measurements.push({ order: item.order, measurement: value });
+    }
+    const cacheKey = `${device.uuid}:${kind}`;
+    const serialized = JSON.stringify(measurements);
+    if (this.lastHarmonicValues.get(cacheKey) === serialized) return;
+    try {
+      await this.matter.updateAccessoryState(
+        device.uuid, this.matter.clusterNames.ElectricalPowerMeasurement, { [kind]: measurements },
+      );
+      this.lastHarmonicValues.set(cacheKey, serialized);
+      this.log.info(`${device.name} ${kind}: ${measurements.length} harmonics`);
+    } catch (error) {
+      this.log.error(`Failed to update '${device.name}' ${kind}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private async handleMqttMessage(topic: string, payload: string): Promise<void> {
     const bindings = this.bindingsByTopic.get(topic);
     if (!bindings || bindings.length === 0) return;
@@ -868,14 +917,19 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    const rawValue = Number(text);
-    if (!Number.isFinite(rawValue)) {
-      this.log.warn(`Ignoring non-numeric MQTT payload on '${topic}': ${JSON.stringify(text)}`);
-      return;
-    }
-
+    // Harmonic topics carry JSON arrays, whereas all other topics are numeric.
+    // Resolve per binding so a malformed payload cannot corrupt unrelated endpoints.
     for (const binding of bindings) {
-      await this.publishBinding(binding, rawValue);
+      if (binding.kind === 'harmonicCurrents' || binding.kind === 'harmonicPhases') {
+        await this.publishHarmonics(binding, text);
+      } else {
+        const rawValue = Number(text);
+        if (!Number.isFinite(rawValue)) {
+          this.log.warn(`Ignoring non-numeric MQTT payload on '${topic}': ${JSON.stringify(text)}`);
+          continue;
+        }
+        await this.publishBinding(binding, rawValue);
+      }
     }
   }
 
