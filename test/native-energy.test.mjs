@@ -106,7 +106,7 @@ test('solar power creates required parts, exports generation as negative power',
     { cumulativeEnergyExported: { energy: 500000000 } }, 'meter']);
 });
 
-test('battery storage routes SoC, AC and DC power to distinct parts', async () => {
+test('battery storage routes SoC, AC and DC power and disables adjustment commands', async () => {
   const { instance, calls } = platform();
   const [d] = instance.parseDevices({ devices: [{
     id: 'byd', name: 'BYD', topic: 'byd/ac', deviceType: 'batteryStorage',
@@ -120,8 +120,16 @@ test('battery storage routes SoC, AC and DC power to distinct parts', async () =
   assert.equal(dem.clusters.deviceEnergyManagement.esaType, 5);
   assert.equal(dem.clusters.deviceEnergyManagement.absMinPower, 0);
   assert.equal(dem.clusters.deviceEnergyManagement.absMaxPower, 0);
-  assert.equal('powerAdjustmentCapability' in dem.clusters.deviceEnergyManagement, false);
-  assert.equal(dem.handlers, undefined);
+  assert.equal(dem.clusters.deviceEnergyManagement.powerAdjustmentCapability, null);
+  assert.equal(dem.clusters.deviceEnergyManagement.optOutState, 3);
+  await assert.rejects(
+    () => dem.handlers.deviceEnergyManagement.powerAdjustRequest({power: 1000, duration: 60}),
+    /monitor-only/,
+  );
+  await assert.rejects(
+    () => dem.handlers.deviceEnergyManagement.cancelPowerAdjustRequest(),
+    /monitor-only/,
+  );
   assert.equal(a.parts[3].clusters.electricalPowerMeasurement.activePower, null);
   await instance.publishBinding({device:d,kind:'batterySoc'},73.5);
   await instance.publishBinding({device:d,kind:'power'},-2500);
@@ -145,7 +153,9 @@ test('battery storage can report configured physical power limits without contro
   const dem = instance.buildAccessory(d).parts.find(x => x.id === 'energy-management');
   assert.equal(dem.clusters.deviceEnergyManagement.absMinPower, -4600000);
   assert.equal(dem.clusters.deviceEnergyManagement.absMaxPower, 3000000);
-  assert.equal(dem.handlers, undefined);
+  assert.equal(dem.clusters.deviceEnergyManagement.powerAdjustmentCapability, null);
+  assert.equal(dem.clusters.deviceEnergyManagement.optOutState, 3);
+  assert.equal(typeof dem.handlers.deviceEnergyManagement.powerAdjustRequest, 'function');
 });
 
 test('incomplete native configs are skipped instead of misrepresenting measurements', () => {
