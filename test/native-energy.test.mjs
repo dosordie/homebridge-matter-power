@@ -106,6 +106,78 @@ test('solar power creates required parts, exports generation as negative power',
     { cumulativeEnergyExported: { energy: 500000000 } }, 'meter']);
 });
 
+test('PV reports signed current, actual AC voltage and reactive power', async () => {
+  const { instance, calls } = platform();
+  const [pv] = instance.parseDevices({ devices: [{
+    id: 'pv', name: 'PV', topic: 'pv/w', deviceType: 'solarPower',
+    voltageTopic: 'pv/volts', currentTopic: 'pv/amps', reactivePowerTopic: 'pv/var',
+    energyExportedTopic: 'pv/lifetime', voltageMultiplier: 1, currentMultiplier: 1,
+  }] });
+  const sensor = instance.buildAccessory(pv).parts.find(x => x.id === 'meter');
+  assert.equal(sensor.clusters.electricalPowerMeasurement.reactivePower, null);
+  await instance.publishBinding({ device: pv, kind: 'voltage' }, 232.4);
+  await instance.publishBinding({ device: pv, kind: 'current' }, 8.25);
+  await instance.publishBinding({ device: pv, kind: 'reactivePower' }, -45.5);
+  await instance.publishBinding({ device: pv, kind: 'current' }, -9);
+  assert.deepEqual(calls[0], [pv.uuid, 'electricalPowerMeasurement', { voltage: 232400 }, 'meter']);
+  assert.deepEqual(calls[1], [pv.uuid, 'electricalPowerMeasurement', { activeCurrent: -8250 }, 'meter']);
+  assert.deepEqual(calls[2], [pv.uuid, 'electricalPowerMeasurement', { reactivePower: -45500 }, 'meter']);
+  assert.deepEqual(calls[3], [pv.uuid, 'electricalPowerMeasurement', { activeCurrent: -9000 }, 'meter']);
+});
+
+test('signed currents on the grid meter are retained, not discarded', async () => {
+  const { instance, calls, messages } = platform();
+  const [grid] = instance.parseDevices({ devices: [{
+    id: 'grid', name: 'Grid', topic: 'grid/power', deviceType: 'electricalMeter',
+    currentTopic: 'grid/current', energyImportedTopic: 'grid/lifetime',
+  }] });
+  await instance.publishBinding({ device: grid, kind: 'current' }, -7.35);
+  assert.deepEqual(calls[0], [grid.uuid, 'electricalPowerMeasurement', { activeCurrent: -7350 }, undefined]);
+  assert.equal(messages.some(x => x[0] === 'warn'), false);
+});
+
+test('PV daily yield is periodic, local-day timestamped and never changes lifetime counter', async () => {
+  const { instance, calls } = platform();
+  const base = {
+    id: 'solar', name: 'Solar', topic: 'pv/w', deviceType: 'solarPower',
+    energyExportedTopic: 'pv/all', energyExportedUnit: 'kWh',
+  };
+  const [withoutDaily] = instance.parseDevices({ devices: [base] });
+  const [withDaily] = instance.parseDevices({ devices: [{
+    ...base, energyExportedDailyTopic: 'pv/today', energyExportedDailyUnit: 'Wh',
+  }] });
+  assert.notEqual(withDaily.uuid, withoutDaily.uuid);
+  assert.equal(withoutDaily.energyExportedDailyTopic, undefined);
+  assert.equal(instance.buildAccessory(withoutDaily).parts[1].clusters.electricalEnergyMeasurement.periodicEnergyExported, undefined);
+  const energyCluster = instance.buildAccessory(withDaily).parts[1].clusters.electricalEnergyMeasurement;
+  assert.equal(energyCluster.periodicEnergyExported, null);
+  assert.deepEqual(energyCluster.cumulativeEnergyExported, { energy: 0 });
+  await instance.publishBinding({ device: withDaily, kind: 'energyExportedDaily' }, 1234);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], 'electricalEnergyMeasurement');
+  assert.equal(calls[0][3], 'meter');
+  const first = calls[0][2].periodicEnergyExported;
+  assert.equal(first.energy, 1234000);
+  const now = new Date((first.endTimestamp + 946684800) * 1000);
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  assert.equal(first.startTimestamp, Math.floor(midnight.getTime() / 1000) - 946684800);
+  assert.ok(first.endTimestamp >= first.startTimestamp);
+  await instance.publishBinding({ device: withDaily, kind: 'energyExportedDaily' }, -5);
+  assert.equal(calls.length, 1, 'negative daily values are ignored');
+  await instance.publishBinding({ device: withDaily, kind: 'energyExported' }, 3456.5);
+  assert.deepEqual(calls[1][2], { cumulativeEnergyExported: { energy: 3456500000 } });
+});
+
+test('PV daily yield topic is not routed onto a grid meter', () => {
+  const { instance, messages } = platform();
+  const [meter] = instance.parseDevices({ devices: [{
+    id: 'grid', name: 'Meter', topic: 'grid/w', deviceType: 'electricalMeter',
+    energyImportedTopic: 'grid/in', energyExportedDailyTopic: 'grid/today',
+  }] });
+  assert.equal(meter.energyExportedDailyTopic, undefined);
+  assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('Ignoring energyExportedDailyTopic')));
+});
+
 test('battery storage routes SoC, AC and DC power and disables adjustment commands', async () => {
   const { instance, calls } = platform();
   const [d] = instance.parseDevices({ devices: [{
