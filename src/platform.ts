@@ -290,7 +290,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
                 batChargeLevel: 0, batReplacementNeeded: false,
                 batReplaceability: 3, batChargeState: 0,
                 batFunctionalWhileCharging: true,
-                batVoltage: null, batCapacity: null,
+                batVoltage: null,
                 batTimeRemaining: null, batTimeToFullCharge: null,
                 batChargingCurrent: null, activeBatFaults: [], activeBatChargeFaults: [],
               } },
