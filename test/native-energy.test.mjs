@@ -158,6 +158,54 @@ test('battery storage can report configured physical power limits without contro
   assert.equal(typeof dem.handlers.deviceEnergyManagement.powerAdjustRequest, 'function');
 });
 
+test('battery adjustment demo is opt-in, uses separate identity and rejects commands', async () => {
+  const { instance, messages } = platform();
+  const config = { devices: [{
+    id: 'demo-by-id', name: 'BYD Demo', topic: 'byd/power',
+    deviceType: 'batteryStorage', batterySocTopic: 'byd/soc',
+    batteryCapacityMah: 25000,
+  }] };
+  const [normal] = instance.parseDevices(config);
+  const [testDevice] = instance.parseDevices({ devices: [{
+    ...config.devices[0], batteryAdjustmentTestMode: true,
+  }] });
+  assert.equal(normal.batteryAdjustmentTestMode, false);
+  assert.equal(testDevice.batteryAdjustmentTestMode, true);
+  assert.notEqual(normal.uuid, testDevice.uuid);
+  assert.match(testDevice.uuid, /adjustment-test/);
+  const real = instance.buildAccessory(normal).parts.find(x => x.id === 'energy-management');
+  const demo = instance.buildAccessory(testDevice).parts.find(x => x.id === 'energy-management');
+  assert.equal(real.clusters.deviceEnergyManagement.powerAdjustmentCapability, null);
+  assert.equal(real.clusters.deviceEnergyManagement.optOutState, 3);
+  assert.equal(demo.clusters.deviceEnergyManagement.optOutState, 0);
+  assert.deepEqual(demo.clusters.deviceEnergyManagement.powerAdjustmentCapability, {
+    powerAdjustCapability: [{
+      minPower: -1_000_000, maxPower: 1_000_000, minDuration: 60, maxDuration: 3600,
+    }],
+    cause: 0,
+  });
+  assert.equal(demo.clusters.deviceEnergyManagement.absMinPower, -1_000_000);
+  assert.equal(demo.clusters.deviceEnergyManagement.absMaxPower, 1_000_000);
+  await assert.rejects(
+    () => demo.handlers.deviceEnergyManagement.powerAdjustRequest({ power: 500_000, duration: 60 }),
+    /monitor-only/,
+  );
+  await assert.rejects(
+    () => demo.handlers.deviceEnergyManagement.cancelPowerAdjustRequest(),
+    /monitor-only/,
+  );
+  assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('SIMULATION')));
+});
+
+test('battery adjustment demo flag on a non-battery type is ignored', () => {
+  const { instance } = platform();
+  const [meter] = instance.parseDevices({ devices: [{
+    id: 'meter', name: 'Meter', topic: 'grid/power', deviceType: 'electricalMeter',
+    energyImportedTopic: 'grid/kwh', batteryAdjustmentTestMode: true,
+  }] });
+  assert.equal(meter.batteryAdjustmentTestMode, false);
+});
+
 test('incomplete native configs are skipped instead of misrepresenting measurements', () => {
   const { instance } = platform();
   const devices = instance.parseDevices({ devices: [
