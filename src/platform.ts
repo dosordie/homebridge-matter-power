@@ -31,6 +31,8 @@ interface PowerDeviceConfig {
   batterySocTopic?: string;
   batteryDcPowerTopic?: string;
   batteryCapacityMah?: number;
+  batteryMaxChargePowerW?: number;
+  batteryMaxDischargePowerW?: number;
 }
 
 interface RuntimePowerDevice {
@@ -50,6 +52,8 @@ interface RuntimePowerDevice {
   batterySocTopic?: string;
   batteryDcPowerTopic?: string;
   batteryCapacityMah?: number;
+  batteryMaxChargePowerW?: number;
+  batteryMaxDischargePowerW?: number;
 }
 
 interface TopicBinding {
@@ -68,6 +72,7 @@ const DEFAULT_MQTT_URL = 'mqtt://127.0.0.1:1883';
 const ACCESSORY_SCHEMA_VERSION = 'v3';
 const BATTERY_SCHEMA_VERSION = 'v1';
 const NATIVE_SCHEMA_VERSION = 'v1';
+const BATTERY_STORAGE_SCHEMA_VERSION = 'v2';
 
 function optionalTopic(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -181,6 +186,14 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         this.log.error(`Skipping '${name}': batteryStorage requires batteryCapacityMah (rated battery capacity in mAh).`);
         continue;
       }
+      if (selectedType === 'batteryStorage'
+        && (raw.batteryMaxChargePowerW === undefined || raw.batteryMaxDischargePowerW === undefined)) {
+        this.log.warn(
+          `'${name}' batteryStorage has no declared maximum charge/discharge power. `
+          + 'DeviceEnergyManagement will report 0 W bounds (test-only). '
+          + 'Set batteryMaxChargePowerW and batteryMaxDischargePowerW to physical limits.',
+        );
+      }
       if (selectedType === 'electricalMeter'
         && !optionalTopic(raw.energyImportedTopic) && !optionalTopic(raw.energyExportedTopic)) {
         this.log.error(`Skipping '${name}': electricalMeter requires an imported or exported cumulative energy topic.`);
@@ -199,9 +212,11 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       seenIds.add(id);
 
       // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
-      const identity = selectedType !== 'outlet'
-        ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}:${selectedType}:${id}`
-        : batterySocTopic
+      const identity = selectedType === 'batteryStorage'
+        ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}:batteryStorage:${id}`
+        : selectedType !== 'outlet'
+          ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}:${selectedType}:${id}`
+          : batterySocTopic
           ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
           : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
 
@@ -222,10 +237,17 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         batterySocTopic,
         batteryDcPowerTopic: optionalTopic(raw.batteryDcPowerTopic),
         batteryCapacityMah: raw.batteryCapacityMah,
+        batteryMaxChargePowerW: this.nonNegativePower(raw.batteryMaxChargePowerW),
+        batteryMaxDischargePowerW: this.nonNegativePower(raw.batteryMaxDischargePowerW),
       });
     }
 
     return devices;
+  }
+
+  private nonNegativePower(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      && Number.isSafeInteger(Math.round(value * 1000)) ? value : undefined;
   }
 
   private buildAccessory(device: RuntimePowerDevice): MatterAccessory {
@@ -343,6 +365,24 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
                 },
                 electricalEnergyMeasurement: {
                   cumulativeEnergyImported: null, cumulativeEnergyExported: null,
+                },
+              },
+            },
+            {
+              // Mandatory component of a Matter BatteryStorage device. Read-only:
+              // no PowerAdjustment capability or command handlers are advertised.
+              id: 'energy-management',
+              displayName: `${device.name} energy management`,
+              deviceType: types.DeviceEnergyManagement,
+              clusters: {
+                deviceEnergyManagement: {
+                  esaType: 5, // BatteryStorage
+                  esaCanGenerate: true,
+                  esaState: 1, // Online; does not imply charge/discharge control.
+                  // Matter requires non-null limits. 0 is a test fallback only;
+                  // configure the physical limits for accurate reporting.
+                  absMinPower: -Math.round((device.batteryMaxDischargePowerW ?? 0) * 1000),
+                  absMaxPower: Math.round((device.batteryMaxChargePowerW ?? 0) * 1000),
                 },
               },
             },
