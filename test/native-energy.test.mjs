@@ -68,6 +68,27 @@ test('electricalMeter advertises only configured energy direction', () => {
   assert.notEqual(d.uuid, 'homebridge-matter-power:v3:grid');
 });
 
+test('electrical meter never routes an accidentally configured battery SoC topic', () => {
+  const { instance, messages } = platform();
+  const [d] = instance.parseDevices({ devices: [{
+    id: 'meter', name: 'Meter', topic: 'grid/power', deviceType: 'electricalMeter',
+    energyImportedTopic: 'grid/import', batterySocTopic: 'battery/soc',
+  }] });
+  assert.equal(d.batterySocTopic, undefined);
+  assert.equal(instance.buildAccessory(d).clusters.powerSource, undefined);
+  assert.ok(messages.some(m => m[0] === 'warn' && m[1].includes('Ignoring batterySocTopic')));
+});
+
+test('solar power ignores stray battery SoC without losing generation topic', () => {
+  const { instance } = platform();
+  const [d] = instance.parseDevices({ devices: [{
+    id: 'pv', name: 'PV', topic: 'pv/power', deviceType: 'solarPower',
+    energyExportedTopic: 'pv/total', batterySocTopic: 'battery/soc',
+  }] });
+  assert.equal(d.batterySocTopic, undefined);
+  assert.ok(instance.buildAccessory(d).parts.find(p => p.id === 'meter'));
+});
+
 test('solar power creates required parts, exports generation as negative power', async () => {
   const { instance, calls } = platform();
   const [d] = instance.parseDevices({ devices: [{
