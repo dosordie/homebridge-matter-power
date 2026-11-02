@@ -137,7 +137,7 @@
               "title": "Battery SoC topic (experimental)",
               "type": "string",
               "placeholder": "home/battery/soc",
-              "description": "Numeric MQTT payload from 0 to 100 percent. Exposed through Matter PowerSource.batPercentRemaining. Apple Home support for bridged battery updates may be limited."
+              "description": "Numeric MQTT payload from 0 to 100 percent. Valid only for default outlet and native batteryStorage; ignored with a warning on electricalMeter/electricalSensor/solarPower. Apple Home battery display/update support is limited."
             },
             "batteryDcPowerTopic": {
               "title": "Battery DC power topic (optional)",
