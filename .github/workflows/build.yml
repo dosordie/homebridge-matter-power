@@ -27,7 +27,7 @@ jobs:
       - name: Test
         run: node --test
       - name: Regenerate dist for v0.4.3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/native-energy-0.4' && matrix.node-version == 22
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/native-energy-0.4' && matrix.node-version == 24
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
