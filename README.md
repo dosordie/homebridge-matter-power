@@ -240,6 +240,37 @@ Supported values for `deviceType`: `outlet`, `electricalSensor`, `electricalMete
 
 The input topic is positive **generation** in watts. Matter reports outgoing generation as negative active power. Solar production is reported as `cumulativeEnergyExported`, not imported. A composed Matter SolarPower device includes a wired PowerSource and an ElectricalSensor part named `meter`.
 
+#### Extra PV measurements (v0.4.5)
+
+The original `voltageTopic` and `currentTopic` now support signed AC generation properly. Add real inverter **AC-output** measurements (not net grid exchange) to your SolarPower device:
+
+```json
+{
+  "id": "pv-native-test",
+  "name": "PV Leistung",
+  "deviceType": "solarPower",
+  "topic": "home/pv/ac_power_w",
+  "voltageTopic": "home/pv/ac_voltage_v",
+  "currentTopic": "home/pv/ac_current_a",
+  "reactivePowerTopic": "home/pv/reactive_var",
+  "energyExportedTopic": "home/pv/lifetime_kwh",
+  "energyExportedUnit": "kWh",
+  "energyExportedDailyTopic": "home/pv/today_kwh",
+  "energyExportedDailyUnit": "kWh"
+}
+```
+
+All example topics are placeholders. Voltage is sent in Matter millivolts. Solar current from a positive generation-current magnitude is sent as **negative mA**, consistent with the negative `activePower` of an exporting PV plant. Negative signed current measurements are accepted for all device types; for non-solar devices their sign is preserved. `reactivePowerTopic` reports signed var (converted to mvar); it does not silently invert the sign, because actual reactive-power direction must come from the source.
+
+**PV total vs grid export:** `energyExportedTopic` must be the **monotonically increasing total PV generated**, not the grid export counter. With batteries this distinction is essential: exported grid energy and PV production are not the same. If combining two inverters, sum their actual generated energies without double-counting battery discharge.
+
+**Optional daily PV yield:** `energyExportedDailyTopic` is energy produced *since midnight*, not a cumulative lifetime counter. It is mapped to Matter `periodicEnergyExported` using the Homebridge host's **local timezone** for midnight and the current timestamp for the period end. Make sure the server's timezone and source counter's daily reset agree (including DST), publish a fresh retained reading after midnight, and use `energyExportedDailyUnit` (Wh or kWh). Daily yield is not used to fabricate a lifetime kWh counter.
+
+Enabling the daily feature adds the Matter `PeriodicEnergy` feature. It therefore uses a **new SolarPower device identity** to avoid Homebridge restoring an incompatible cached cluster shape; Apple Home may need time to discover the replacement endpoint. Removing the daily topic restores the original SolarPower identity. The existing native power and cumulative-energy behavior is unchanged when the daily topic is absent.
+
+Neither current, reactive power nor the daily energy attributes are guaranteed to appear in Apple Home: controllers decide which Matter energy attributes to display. The core AC power measurement continues to work even when those topics are omitted.
+
+
 ### Battery Storage
 
 ```json
