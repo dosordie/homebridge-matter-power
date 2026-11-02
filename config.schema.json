@@ -83,7 +83,7 @@
               "title": "Voltage topic (optional)",
               "type": "string",
               "placeholder": "home/grid/voltage",
-              "description": "Numeric MQTT payload containing voltage in V."
+              "description": "Numeric MQTT payload with AC voltage in V. For SolarPower this must describe the PV inverter AC output, not the grid connection's net power."
             },
             "voltageMultiplier": {
               "title": "Voltage multiplier",
@@ -95,7 +95,7 @@
               "title": "Current topic (optional)",
               "type": "string",
               "placeholder": "home/grid/current",
-              "description": "Numeric MQTT payload containing current in A."
+              "description": "Numeric MQTT payload in A. SolarPower interprets magnitude as generation current flowing OUT (negative Matter sign); ElectricalMeter/Sensor and other types preserve signed values. Use inverter output current for PV, not grid-connection net current."
             },
             "currentMultiplier": {
               "title": "Current multiplier",
@@ -122,7 +122,7 @@
               "title": "Exported/returned energy topic (optional)",
               "type": "string",
               "placeholder": "home/grid/export_total",
-              "description": "Monotonically increasing cumulative returned/exported energy counter. SolarPower requires this for cumulative generation."
+              "description": "Monotonically increasing LIFETIME exported energy in Wh or kWh. SolarPower: total PV generated, including self-consumption and battery charging; never the grid feed-in meter or a daily-reset yield."
             },
             "energyExportedUnit": {
               "title": "Exported energy unit",
@@ -168,6 +168,28 @@
               "type": "boolean",
               "default": false,
               "description": "Advanced test ONLY for native BatteryStorage. Advertises a synthetic ±1000 W adjustment capability to probe Matter controllers. ALL control requests fail; no MQTT commands are sent. Changes this device's Matter identity; turning off recreates its normal endpoint. Leave false for normal use."
+            },
+            "reactivePowerTopic": {
+              "title": "AC reactive power topic (optional)",
+              "type": "string",
+              "placeholder": "home/pv/reactive_var",
+              "description": "Signed reactive power (var). SolarPower values must be measured at the PV inverter, not at the grid import/export point. Signed MQTT input is retained."
+            },
+            "energyExportedDailyTopic": {
+              "title": "PV energy generated today topic (optional, SolarPower only)",
+              "type": "string",
+              "placeholder": "home/pv/energy_today_kwh",
+              "description": "PV production SINCE LOCAL MIDNIGHT (not lifetime and not grid feed-in). Publishes Matter PeriodicEnergyExported; requires consistent Homebridge host local timezone. Enabling it changes the PV Matter accessory identity to activate the PeriodicEnergy feature."
+            },
+            "energyExportedDailyUnit": {
+              "title": "PV daily energy unit",
+              "type": "string",
+              "default": "kWh",
+              "enum": [
+                "Wh",
+                "kWh"
+              ],
+              "description": "Unit for energyExportedDailyTopic. Period is local midnight through the MQTT reading."
             }
           }
         }
