@@ -688,6 +688,35 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         logValue = `${vars} var`;
         break;
       }
+      case 'reactiveCurrent':
+      case 'apparentCurrent':
+      case 'apparentPower':
+      case 'rmsVoltage':
+      case 'rmsCurrent':
+      case 'rmsPower':
+      case 'frequency':
+      case 'powerFactor': {
+        // Matter electric measurement units:
+        // currents in mA, powers in mW/mVA, voltages in mV,
+        // frequency in mHz, power factor in 0.01 % (1.0 => 10000).
+        const scale = kind === 'powerFactor' ? 10000 : 1000;
+        if (kind === 'powerFactor' && (rawValue < -1 || rawValue > 1)) {
+          this.log.warn(`Ignoring powerFactor outside -1..1 for '${device.name}': ${rawValue}`);
+          return;
+        }
+        if ((kind === 'rmsVoltage' || kind === 'frequency') && rawValue < 0) {
+          this.log.warn(`Ignoring negative ${kind} for '${device.name}': ${rawValue}`);
+          return;
+        }
+        matterValue = this.toSafeInteger(rawValue * scale, `${kind} for '${device.name}'`);
+        cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
+        partId = device.deviceType === 'solarPower' ? 'meter'
+          : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
+        state = { [kind]: matterValue };
+        logValue = `${rawValue} ${kind === 'powerFactor' ? 'PF' : kind === 'frequency' ? 'Hz'
+          : kind.includes('Current') ? 'A' : kind === 'rmsVoltage' ? 'V' : 'VA/W'}`;
+        break;
+      }
       case 'energyImported':
       case 'energyExported': {
         if (rawValue < 0) {
@@ -706,24 +735,29 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         logValue = `${rawValue} ${unit}`;
         break;
       }
+      case 'energyImportedDaily':
       case 'energyExportedDaily': {
-        // PV yield since local midnight is PERIODIC energy, never a resettable
-        // cumulative lifetime meter. Date uses the bridge host's timezone.
-        if (device.deviceType !== 'solarPower') return;
+        // Daily production/consumption is PERIODIC, not a lifetime counter.
+        // The local day is determined by the Homebridge host's timezone.
+        if (device.deviceType !== 'solarPower' && device.deviceType !== 'electricalSensor') return;
+        const imported = kind === 'energyImportedDaily';
+        if (imported && device.deviceType === 'solarPower') return;
         if (rawValue < 0) {
-          this.log.warn(`Ignoring negative PV daily energy for '${device.name}': ${rawValue}`);
+          this.log.warn(`Ignoring negative ${kind} for '${device.name}': ${rawValue}`);
           return;
         }
-        const milliWh = rawValue * (device.energyExportedDailyUnit === 'kWh' ? 1_000_000 : 1000);
-        matterValue = this.toSafeInteger(milliWh, `daily energy for '${device.name}'`);
+        const unit = imported ? device.energyImportedDailyUnit : device.energyExportedDailyUnit;
+        const milliWh = rawValue * (unit === 'kWh' ? 1_000_000 : 1000);
+        matterValue = this.toSafeInteger(milliWh, `${kind} for '${device.name}'`);
         const now = new Date();
         const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const startTimestamp = Math.floor(midnight.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
         const endTimestamp = Math.floor(now.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
         cluster = this.matter.clusterNames.ElectricalEnergyMeasurement;
-        partId = 'meter';
-        state = { periodicEnergyExported: { energy: matterValue, startTimestamp, endTimestamp } };
-        logValue = `${rawValue} ${device.energyExportedDailyUnit} since local midnight`;
+        partId = device.deviceType === 'solarPower' ? 'meter' : undefined;
+        const attribute = imported ? 'periodicEnergyImported' : 'periodicEnergyExported';
+        state = { [attribute]: { energy: matterValue, startTimestamp, endTimestamp } };
+        logValue = `${rawValue} ${unit} since local midnight`;
         break;
       }
       case 'batterySoc': {
@@ -756,8 +790,9 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
     // For daily counters, a reset at midnight can legitimately repeat the same
     // numeric reading as yesterday; the period start is part of its identity.
     const cacheKey = `${device.uuid}:${kind}`;
-    if (kind === 'energyExportedDaily') {
-      const periodStart = (state.periodicEnergyExported as { startTimestamp: number }).startTimestamp;
+    if (kind === 'energyExportedDaily' || kind === 'energyImportedDaily') {
+      const periodic = state.periodicEnergyExported ?? state.periodicEnergyImported;
+      const periodStart = (periodic as { startTimestamp: number }).startTimestamp;
       const previousPeriod = this.lastDailyPeriodStart.get(cacheKey);
       if (previousPeriod !== periodStart) {
         this.lastMatterValues.delete(cacheKey);
