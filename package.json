@@ -1,7 +1,7 @@
 {
   "name": "homebridge-matter-power",
   "displayName": "Homebridge Matter Power",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "MQTT Matter electrical measurements with native solar, storage and meter types; ignore unsupported battery SoC.",
   "author": "dosordie",
   "license": "MIT",
