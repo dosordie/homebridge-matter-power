@@ -32,6 +32,7 @@ export class MatterPowerPlatform {
     bindingsByTopic = new Map();
     lastMatterValues = new Map();
     lastDailyPeriodStart = new Map();
+    lastHarmonicValues = new Map();
     firstLoggedValues = new Set();
     mqttClient;
     constructor(log, platformConfig, api) {
@@ -123,11 +124,25 @@ export class MatterPowerPlatform {
             }
             seenIds.add(id);
             // Keep existing identities unless a new feature-gated cluster composition is requested.
-            // A solar daily period needs PeriodicEnergy in addition to CumulativeEnergy;
-            // Homebridge's cache does not safely swap cluster feature sets in place.
-            const solarDailyEnergy = selectedType === 'solarPower' ? optionalTopic(raw.energyExportedDailyTopic) : undefined;
-            if (optionalTopic(raw.energyExportedDailyTopic) && selectedType !== 'solarPower') {
-                this.log.warn(`Ignoring energyExportedDailyTopic for '${name}': only solarPower supports PV daily yield.`);
+            // Periodic energy changes the Matter cluster feature set. Use a new
+            // identity when enabled so cached endpoints cannot retain old features.
+            // SolarPower supports exported yield; generic ElectricalSensor supports both.
+            const advancedPowerFeatures = selectedType === 'electricalSensor'
+                ? [
+                    optionalTopic(raw.neutralCurrentTopic) ? 'poly' : '',
+                    optionalTopic(raw.harmonicCurrentsTopic) ? 'harm' : '',
+                    optionalTopic(raw.harmonicPhasesTopic) ? 'qual' : '',
+                ].filter(Boolean).join('-')
+                : '';
+            const dailyImported = selectedType === 'electricalSensor'
+                ? optionalTopic(raw.energyImportedDailyTopic) : undefined;
+            const dailyExported = selectedType === 'solarPower' || selectedType === 'electricalSensor'
+                ? optionalTopic(raw.energyExportedDailyTopic) : undefined;
+            if (optionalTopic(raw.energyImportedDailyTopic) && selectedType !== 'electricalSensor') {
+                this.log.warn(`Ignoring energyImportedDailyTopic for '${name}': only electricalSensor supports daily imported energy.`);
+            }
+            if (optionalTopic(raw.energyExportedDailyTopic) && !dailyExported) {
+                this.log.warn(`Ignoring energyExportedDailyTopic for '${name}': only solarPower/electricalSensor support daily exported energy.`);
             }
             // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
             // Switching the opt-in DEM simulation requires a fresh Matter endpoint:
@@ -140,7 +155,7 @@ export class MatterPowerPlatform {
             const identity = selectedType === 'batteryStorage'
                 ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}${batteryAdjustmentTestMode ? '-adjustment-test' : ''}:batteryStorage:${id}`
                 : selectedType !== 'outlet'
-                    ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${solarDailyEnergy ? '-daily-v1' : ''}:${selectedType}:${id}`
+                    ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${dailyImported || dailyExported ? '-daily-v1' : ''}${advancedPowerFeatures ? '-equality-v1-' + advancedPowerFeatures : ''}:${selectedType}:${id}`
                     : batterySocTopic
                         ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
                         : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
@@ -155,7 +170,20 @@ export class MatterPowerPlatform {
                 currentTopic: optionalTopic(raw.currentTopic),
                 currentMultiplier: positiveMultiplier(raw.currentMultiplier),
                 reactivePowerTopic: optionalTopic(raw.reactivePowerTopic),
-                energyExportedDailyTopic: solarDailyEnergy,
+                reactiveCurrentTopic: optionalTopic(raw.reactiveCurrentTopic),
+                apparentCurrentTopic: optionalTopic(raw.apparentCurrentTopic),
+                apparentPowerTopic: optionalTopic(raw.apparentPowerTopic),
+                rmsVoltageTopic: optionalTopic(raw.rmsVoltageTopic),
+                rmsCurrentTopic: optionalTopic(raw.rmsCurrentTopic),
+                rmsPowerTopic: optionalTopic(raw.rmsPowerTopic),
+                frequencyTopic: optionalTopic(raw.frequencyTopic),
+                powerFactorTopic: optionalTopic(raw.powerFactorTopic),
+                neutralCurrentTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.neutralCurrentTopic) : undefined,
+                harmonicCurrentsTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.harmonicCurrentsTopic) : undefined,
+                harmonicPhasesTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.harmonicPhasesTopic) : undefined,
+                energyImportedDailyTopic: dailyImported,
+                energyImportedDailyUnit: energyUnit(raw.energyImportedDailyUnit),
+                energyExportedDailyTopic: dailyExported,
                 energyExportedDailyUnit: energyUnit(raw.energyExportedDailyUnit),
                 energyImportedTopic: optionalTopic(raw.energyImportedTopic),
                 energyImportedUnit: energyUnit(raw.energyImportedUnit),
@@ -199,23 +227,54 @@ export class MatterPowerPlatform {
         const nativeEnergy = {
             ...(device.energyImportedTopic ? { cumulativeEnergyImported: { energy: 0 } } : {}),
             ...(device.energyExportedTopic ? { cumulativeEnergyExported: { energy: 0 } } : {}),
+            ...(device.energyImportedDailyTopic ? { periodicEnergyImported: null } : {}),
+            ...(device.energyExportedDailyTopic ? { periodicEnergyExported: null } : {}),
+        };
+        // Only configured MQTT measurements appear as optional Matter attributes.
+        // Homebridge supplies the required power mode, accuracy and topology.
+        const expandedElectricalPowerMeasurement = {
+            ...electricalPowerMeasurement,
+            ...(device.reactivePowerTopic ? { reactivePower: null } : {}),
+            ...(device.reactiveCurrentTopic ? { reactiveCurrent: null } : {}),
+            ...(device.apparentCurrentTopic ? { apparentCurrent: null } : {}),
+            ...(device.apparentPowerTopic ? { apparentPower: null } : {}),
+            ...(device.rmsVoltageTopic ? { rmsVoltage: null } : {}),
+            ...(device.rmsCurrentTopic ? { rmsCurrent: null } : {}),
+            ...(device.rmsPowerTopic ? { rmsPower: null } : {}),
+            ...(device.frequencyTopic ? { frequency: null } : {}),
+            ...(device.powerFactorTopic ? { powerFactor: null } : {}),
+            ...(device.neutralCurrentTopic ? { neutralCurrent: null } : {}),
+            ...(device.harmonicCurrentsTopic ? { harmonicCurrents: null } : {}),
+            ...(device.harmonicPhasesTopic ? { harmonicPhases: null } : {}),
         };
         const electricalEnergyMeasurement = device.deviceType === 'outlet'
             ? { cumulativeEnergyImported: { energy: 0 }, cumulativeEnergyExported: { energy: 0 } }
             : nativeEnergy;
         switch (device.deviceType) {
             case 'electricalMeter':
-            case 'electricalSensor':
+            case 'electricalSensor': {
+                const optionalFeatures = device.deviceType === 'electricalSensor'
+                    ? [
+                        ...(device.neutralCurrentTopic ? ['PolyphasePower'] : []),
+                        ...(device.harmonicCurrentsTopic ? ['Harmonics'] : []),
+                        ...(device.harmonicPhasesTopic ? ['PowerQuality'] : []),
+                    ]
+                    : [];
+                const sensorType = optionalFeatures.length > 0
+                    ? types.ElectricalSensor.with(this.matter.deviceRequirements.ElectricalSensor.ElectricalPowerMeasurementServer
+                        .with('AlternatingCurrent', ...optionalFeatures))
+                    : types.ElectricalSensor;
                 return {
                     ...base,
                     deviceType: device.deviceType === 'electricalMeter'
-                        ? types.ElectricalMeter : types.ElectricalSensor,
+                        ? types.ElectricalMeter : sensorType,
                     clusters: {
-                        electricalPowerMeasurement,
+                        electricalPowerMeasurement: expandedElectricalPowerMeasurement,
                         ...(device.deviceType === 'electricalMeter' || Object.keys(nativeEnergy).length > 0
                             ? { electricalEnergyMeasurement } : {}),
                     },
                 };
+            }
             case 'solarPower':
                 return {
                     ...base,
@@ -396,6 +455,18 @@ export class MatterPowerPlatform {
             this.addBinding(device.voltageTopic, device, 'voltage');
             this.addBinding(device.currentTopic, device, 'current');
             this.addBinding(device.reactivePowerTopic, device, 'reactivePower');
+            this.addBinding(device.reactiveCurrentTopic, device, 'reactiveCurrent');
+            this.addBinding(device.apparentCurrentTopic, device, 'apparentCurrent');
+            this.addBinding(device.apparentPowerTopic, device, 'apparentPower');
+            this.addBinding(device.rmsVoltageTopic, device, 'rmsVoltage');
+            this.addBinding(device.rmsCurrentTopic, device, 'rmsCurrent');
+            this.addBinding(device.rmsPowerTopic, device, 'rmsPower');
+            this.addBinding(device.frequencyTopic, device, 'frequency');
+            this.addBinding(device.powerFactorTopic, device, 'powerFactor');
+            this.addBinding(device.neutralCurrentTopic, device, 'neutralCurrent');
+            this.addBinding(device.harmonicCurrentsTopic, device, 'harmonicCurrents');
+            this.addBinding(device.harmonicPhasesTopic, device, 'harmonicPhases');
+            this.addBinding(device.energyImportedDailyTopic, device, 'energyImportedDaily');
             this.addBinding(device.energyExportedDailyTopic, device, 'energyExportedDaily');
             this.addBinding(device.energyImportedTopic, device, 'energyImported');
             this.addBinding(device.energyExportedTopic, device, 'energyExported');
@@ -503,6 +574,40 @@ export class MatterPowerPlatform {
                 logValue = `${vars} var`;
                 break;
             }
+            case 'neutralCurrent':
+            case 'reactiveCurrent':
+            case 'apparentCurrent':
+            case 'apparentPower':
+            case 'rmsVoltage':
+            case 'rmsCurrent':
+            case 'rmsPower':
+            case 'frequency':
+            case 'powerFactor': {
+                // Matter electric measurement units:
+                // currents in mA, powers in mW/mVA, voltages in mV,
+                // frequency in mHz, power factor in 0.01 % (1.0 => 10000).
+                const scale = kind === 'powerFactor' ? 10000 : 1000;
+                if (kind === 'powerFactor' && (rawValue < -1 || rawValue > 1)) {
+                    this.log.warn(`Ignoring powerFactor outside -1..1 for '${device.name}': ${rawValue}`);
+                    return;
+                }
+                if ((kind === 'rmsVoltage' || kind === 'frequency') && rawValue < 0) {
+                    this.log.warn(`Ignoring negative ${kind} for '${device.name}': ${rawValue}`);
+                    return;
+                }
+                matterValue = this.toSafeInteger(rawValue * scale, `${kind} for '${device.name}'`);
+                cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
+                state = { [kind]: matterValue };
+                logValue = `${rawValue} ${kind === 'powerFactor' ? 'PF' : kind === 'frequency' ? 'Hz'
+                    : kind.includes('Current') ? 'A' : kind === 'rmsVoltage' ? 'V' : 'VA/W'}`;
+                break;
+            }
+            case 'harmonicCurrents':
+            case 'harmonicPhases':
+                // Harmonics are encoded as a JSON array and handled separately.
+                return;
             case 'energyImported':
             case 'energyExported': {
                 if (rawValue < 0) {
@@ -521,25 +626,31 @@ export class MatterPowerPlatform {
                 logValue = `${rawValue} ${unit}`;
                 break;
             }
+            case 'energyImportedDaily':
             case 'energyExportedDaily': {
-                // PV yield since local midnight is PERIODIC energy, never a resettable
-                // cumulative lifetime meter. Date uses the bridge host's timezone.
-                if (device.deviceType !== 'solarPower')
+                // Daily production/consumption is PERIODIC, not a lifetime counter.
+                // The local day is determined by the Homebridge host's timezone.
+                if (device.deviceType !== 'solarPower' && device.deviceType !== 'electricalSensor')
+                    return;
+                const imported = kind === 'energyImportedDaily';
+                if (imported && device.deviceType === 'solarPower')
                     return;
                 if (rawValue < 0) {
-                    this.log.warn(`Ignoring negative PV daily energy for '${device.name}': ${rawValue}`);
+                    this.log.warn(`Ignoring negative ${kind} for '${device.name}': ${rawValue}`);
                     return;
                 }
-                const milliWh = rawValue * (device.energyExportedDailyUnit === 'kWh' ? 1_000_000 : 1000);
-                matterValue = this.toSafeInteger(milliWh, `daily energy for '${device.name}'`);
+                const unit = imported ? device.energyImportedDailyUnit : device.energyExportedDailyUnit;
+                const milliWh = rawValue * (unit === 'kWh' ? 1_000_000 : 1000);
+                matterValue = this.toSafeInteger(milliWh, `${kind} for '${device.name}'`);
                 const now = new Date();
                 const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const startTimestamp = Math.floor(midnight.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
                 const endTimestamp = Math.floor(now.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
                 cluster = this.matter.clusterNames.ElectricalEnergyMeasurement;
-                partId = 'meter';
-                state = { periodicEnergyExported: { energy: matterValue, startTimestamp, endTimestamp } };
-                logValue = `${rawValue} ${device.energyExportedDailyUnit} since local midnight`;
+                partId = device.deviceType === 'solarPower' ? 'meter' : undefined;
+                const attribute = imported ? 'periodicEnergyImported' : 'periodicEnergyExported';
+                state = { [attribute]: { energy: matterValue, startTimestamp, endTimestamp } };
+                logValue = `${rawValue} ${unit} since local midnight`;
                 break;
             }
             case 'batterySoc': {
@@ -571,8 +682,9 @@ export class MatterPowerPlatform {
         // For daily counters, a reset at midnight can legitimately repeat the same
         // numeric reading as yesterday; the period start is part of its identity.
         const cacheKey = `${device.uuid}:${kind}`;
-        if (kind === 'energyExportedDaily') {
-            const periodStart = state.periodicEnergyExported.startTimestamp;
+        if (kind === 'energyExportedDaily' || kind === 'energyImportedDaily') {
+            const periodic = state.periodicEnergyExported ?? state.periodicEnergyImported;
+            const periodStart = periodic.startTimestamp;
             const previousPeriod = this.lastDailyPeriodStart.get(cacheKey);
             if (previousPeriod !== periodStart) {
                 this.lastMatterValues.delete(cacheKey);
@@ -597,6 +709,56 @@ export class MatterPowerPlatform {
             this.log.error(`Failed to update '${device.name}' ${kind} Matter state: ${message}`);
         }
     }
+    async publishHarmonics(binding, payload) {
+        const { device, kind } = binding;
+        if (device.deviceType !== 'electricalSensor')
+            return;
+        let raw;
+        try {
+            raw = JSON.parse(payload);
+        }
+        catch {
+            this.log.warn(`Ignoring invalid ${kind} JSON for '${device.name}'.`);
+            return;
+        }
+        // MQTT array: [{"order":3,"measurement":0.123},...].
+        // Values are amps (harmonicCurrents) or degrees (harmonicPhases).
+        // Matter uses milli-amps and milli-degrees.
+        if (!Array.isArray(raw) || raw.length > 128) {
+            this.log.warn(`Ignoring invalid ${kind} array for '${device.name}'.`);
+            return;
+        }
+        const orders = new Set();
+        const measurements = [];
+        for (const item of raw) {
+            if (!item || typeof item !== 'object'
+                || !Number.isInteger(item.order) || item.order < 1 || item.order > 255
+                || orders.has(item.order)
+                || (item.measurement !== null
+                    && (typeof item.measurement !== 'number' || !Number.isFinite(item.measurement)))) {
+                this.log.warn(`Ignoring malformed ${kind} harmonic entry for '${device.name}'.`);
+                return;
+            }
+            orders.add(item.order);
+            const value = item.measurement === null ? null
+                : this.toSafeInteger(item.measurement * 1000, `${kind} harmonic value for '${device.name}'`);
+            if (value === undefined)
+                return;
+            measurements.push({ order: item.order, measurement: value });
+        }
+        const cacheKey = `${device.uuid}:${kind}`;
+        const serialized = JSON.stringify(measurements);
+        if (this.lastHarmonicValues.get(cacheKey) === serialized)
+            return;
+        try {
+            await this.matter.updateAccessoryState(device.uuid, this.matter.clusterNames.ElectricalPowerMeasurement, { [kind]: measurements });
+            this.lastHarmonicValues.set(cacheKey, serialized);
+            this.log.info(`${device.name} ${kind}: ${measurements.length} harmonics`);
+        }
+        catch (error) {
+            this.log.error(`Failed to update '${device.name}' ${kind}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     async handleMqttMessage(topic, payload) {
         const bindings = this.bindingsByTopic.get(topic);
         if (!bindings || bindings.length === 0)
@@ -606,13 +768,20 @@ export class MatterPowerPlatform {
             this.log.warn(`Ignoring empty MQTT payload on '${topic}'.`);
             return;
         }
-        const rawValue = Number(text);
-        if (!Number.isFinite(rawValue)) {
-            this.log.warn(`Ignoring non-numeric MQTT payload on '${topic}': ${JSON.stringify(text)}`);
-            return;
-        }
+        // Harmonic topics carry JSON arrays, whereas all other topics are numeric.
+        // Resolve per binding so a malformed payload cannot corrupt unrelated endpoints.
         for (const binding of bindings) {
-            await this.publishBinding(binding, rawValue);
+            if (binding.kind === 'harmonicCurrents' || binding.kind === 'harmonicPhases') {
+                await this.publishHarmonics(binding, text);
+            }
+            else {
+                const rawValue = Number(text);
+                if (!Number.isFinite(rawValue)) {
+                    this.log.warn(`Ignoring non-numeric MQTT payload on '${topic}': ${JSON.stringify(text)}`);
+                    continue;
+                }
+                await this.publishBinding(binding, rawValue);
+            }
         }
     }
     stop() {
