@@ -262,6 +262,8 @@ Do **not** repurpose a live inverter's PV production counter as a battery charge
 
 ### Compatibility and caveats
 
+- `batterySocTopic` is supported only for `outlet` and `batteryStorage`. If configured on `electricalMeter`, `electricalSensor` or `solarPower`, the value is ignored with a startup warning. Native meters have no battery `PowerSource` cluster.
+
 - Homebridge 2.5.0+ is mandatory for the three new native energy device types and `electricalSensor`.
 - **Apple Home 27.2 rendering is not confirmed** for the native SolarPower / BatteryStorage / ElectricalMeter types. They may appear as unsupported devices; this is an interoperability test, not a promised UI feature.
 - Existing `outlet` devices retain their UUID, state shape and watt display. Test new types under **new device IDs**, leaving your current `Hausverbrauch` alone.
