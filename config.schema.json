@@ -64,7 +64,7 @@
                 "batteryStorage"
               ],
               "default": "outlet",
-              "description": "outlet preserves previous pairing and Apple Home watt display. Native types need Homebridge 2.5+. Solar Power requires energyExportedTopic; Battery Storage requires batterySocTopic; Electrical Meter requires a cumulative energy topic."
+              "description": "outlet preserves previous pairing and Apple Home watt display. Native types need Homebridge 2.5+. Solar Power requires energyExportedTopic; Battery Storage requires batterySocTopic; Electrical Meter requires a cumulative energy topic. Battery Storage also requires batteryCapacityMah."
             },
             "topic": {
               "title": "Power topic",
@@ -144,6 +144,12 @@
               "type": "string",
               "placeholder": "home/battery/dc_power",
               "description": "For batteryStorage only. Signed battery DC power in watts, positive = charging, negative = discharging. Unknown if not provided."
+            },
+            "batteryCapacityMah": {
+              "title": "Battery rated capacity (mAh, native storage only)",
+              "type": "integer",
+              "minimum": 1,
+              "description": "Required when deviceType=batteryStorage. The physical pack's capacity in milliamp-hours (e.g. BYD HVS 12.8 kWh at nominal 512 V: 25000 mAh). Matter requires this value; do not enter kWh here."
             }
           }
         }
