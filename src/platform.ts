@@ -33,6 +33,7 @@ interface PowerDeviceConfig {
   batteryCapacityMah?: number;
   batteryMaxChargePowerW?: number;
   batteryMaxDischargePowerW?: number;
+  batteryAdjustmentTestMode?: boolean;
 }
 
 interface RuntimePowerDevice {
@@ -54,6 +55,7 @@ interface RuntimePowerDevice {
   batteryCapacityMah?: number;
   batteryMaxChargePowerW?: number;
   batteryMaxDischargePowerW?: number;
+  batteryAdjustmentTestMode: boolean;
 }
 
 interface TopicBinding {
@@ -73,6 +75,7 @@ const ACCESSORY_SCHEMA_VERSION = 'v3';
 const BATTERY_SCHEMA_VERSION = 'v1';
 const NATIVE_SCHEMA_VERSION = 'v1';
 const BATTERY_STORAGE_SCHEMA_VERSION = 'v2';
+const TEST_ADJUSTMENT_POWER_W = 1000; // Deliberate synthetic rating, never sent to the BYD.
 
 function optionalTopic(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -212,8 +215,15 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       seenIds.add(id);
 
       // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
+      // Switching the opt-in DEM simulation requires a fresh Matter endpoint:
+      // Homebridge caches compositions and does not replace them in place.
+      const batteryAdjustmentTestMode = selectedType === 'batteryStorage' && raw.batteryAdjustmentTestMode === true;
+      if (batteryAdjustmentTestMode) {
+        this.log.warn(`'${name}': Battery power adjustment SIMULATION enabled. `
+          + 'Advertising test-only ±1000 W, rejecting commands, sending NO MQTT writes.');
+      }
       const identity = selectedType === 'batteryStorage'
-        ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}:batteryStorage:${id}`
+        ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}${batteryAdjustmentTestMode ? '-adjustment-test' : ''}:batteryStorage:${id}`
         : selectedType !== 'outlet'
           ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}:${selectedType}:${id}`
           : batterySocTopic
@@ -239,6 +249,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         batteryCapacityMah: raw.batteryCapacityMah,
         batteryMaxChargePowerW: this.nonNegativePower(raw.batteryMaxChargePowerW),
         batteryMaxDischargePowerW: this.nonNegativePower(raw.batteryMaxDischargePowerW),
+        batteryAdjustmentTestMode,
       });
     }
 
@@ -382,16 +393,31 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
                   esaState: 1, // Online; does not imply charge/discharge control.
                   // Matter requires non-null bounds. 0 is only a test fallback;
                   // configure physical maxima for meaningful rated bounds.
-                  absMinPower: device.batteryMaxDischargePowerW
-                    ? -Math.round(device.batteryMaxDischargePowerW * 1000) : 0,
-                  absMaxPower: Math.round((device.batteryMaxChargePowerW ?? 0) * 1000),
-                  powerAdjustmentCapability: null, // No adjust capability.
-                  optOutState: 3, // Opted out of all external optimisation.
+                  absMinPower: device.batteryAdjustmentTestMode
+                    ? -TEST_ADJUSTMENT_POWER_W * 1000
+                    : device.batteryMaxDischargePowerW
+                      ? -Math.round(device.batteryMaxDischargePowerW * 1000) : 0,
+                  absMaxPower: device.batteryAdjustmentTestMode
+                    ? TEST_ADJUSTMENT_POWER_W * 1000
+                    : Math.round((device.batteryMaxChargePowerW ?? 0) * 1000),
+                  // Demo mode is an intentional, isolated protocol/UI experiment.
+                  // A non-null capability may make controller UI controls visible,
+                  // but it NEVER authorizes the plugin to control any physical battery.
+                  powerAdjustmentCapability: device.batteryAdjustmentTestMode
+                    ? { powerAdjustCapability: [{
+                        minPower: -TEST_ADJUSTMENT_POWER_W * 1000,
+                        maxPower: TEST_ADJUSTMENT_POWER_W * 1000,
+                        minDuration: 60,
+                        maxDuration: 3600,
+                      }], cause: 0 }
+                    : null,
+                  optOutState: device.batteryAdjustmentTestMode ? 0 : 3,
                 },
               },
               handlers: {
                 deviceEnergyManagement: {
                   powerAdjustRequest: async () => {
+                    this.log.warn(`'${device.name}': Matter power adjustment request REJECTED; simulation never controls BYD.`);
                     throw new Error('BYD battery is monitor-only: remote power adjustment is disabled.');
                   },
                   cancelPowerAdjustRequest: async () => {
