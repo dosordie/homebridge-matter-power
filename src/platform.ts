@@ -15,6 +15,7 @@ type PowerDeviceType = 'outlet' | 'electricalSensor' | 'electricalMeter' | 'sola
 type MeasurementKind = 'power' | 'voltage' | 'current'
   | 'reactiveCurrent' | 'apparentCurrent' | 'reactivePower' | 'apparentPower'
   | 'rmsVoltage' | 'rmsCurrent' | 'rmsPower' | 'frequency' | 'powerFactor'
+  | 'neutralCurrent' | 'harmonicCurrents' | 'harmonicPhases'
   | 'energyImported' | 'energyExported' | 'energyImportedDaily' | 'energyExportedDaily'
   | 'batterySoc' | 'batteryDcPower';
 
@@ -37,6 +38,9 @@ interface PowerDeviceConfig {
   rmsPowerTopic?: string;
   frequencyTopic?: string;
   powerFactorTopic?: string;
+  neutralCurrentTopic?: string;
+  harmonicCurrentsTopic?: string;
+  harmonicPhasesTopic?: string;
   energyImportedDailyTopic?: string;
   energyImportedDailyUnit?: EnergyUnit;
   energyExportedDailyTopic?: string;
@@ -72,6 +76,9 @@ interface RuntimePowerDevice {
   rmsPowerTopic?: string;
   frequencyTopic?: string;
   powerFactorTopic?: string;
+  neutralCurrentTopic?: string;
+  harmonicCurrentsTopic?: string;
+  harmonicPhasesTopic?: string;
   energyImportedDailyTopic?: string;
   energyImportedDailyUnit?: EnergyUnit;
   energyExportedDailyTopic?: string;
@@ -250,6 +257,13 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       // Periodic energy changes the Matter cluster feature set. Use a new
       // identity when enabled so cached endpoints cannot retain old features.
       // SolarPower supports exported yield; generic ElectricalSensor supports both.
+      const advancedPowerFeatures = selectedType === 'electricalSensor'
+        ? [
+            optionalTopic(raw.neutralCurrentTopic) ? 'poly' : '',
+            optionalTopic(raw.harmonicCurrentsTopic) ? 'harm' : '',
+            optionalTopic(raw.harmonicPhasesTopic) ? 'qual' : '',
+          ].filter(Boolean).join('-')
+        : '';
       const dailyImported = selectedType === 'electricalSensor'
         ? optionalTopic(raw.energyImportedDailyTopic) : undefined;
       const dailyExported = selectedType === 'solarPower' || selectedType === 'electricalSensor'
@@ -271,7 +285,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       const identity = selectedType === 'batteryStorage'
         ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}${batteryAdjustmentTestMode ? '-adjustment-test' : ''}:batteryStorage:${id}`
         : selectedType !== 'outlet'
-          ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${dailyImported || dailyExported ? '-daily-v1' : ''}:${selectedType}:${id}`
+          ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${dailyImported || dailyExported ? '-daily-v1' : ''}${advancedPowerFeatures ? '-equality-v1-' + advancedPowerFeatures : ''}:${selectedType}:${id}`
           : batterySocTopic
           ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
           : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
@@ -295,6 +309,9 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         rmsPowerTopic: optionalTopic(raw.rmsPowerTopic),
         frequencyTopic: optionalTopic(raw.frequencyTopic),
         powerFactorTopic: optionalTopic(raw.powerFactorTopic),
+        neutralCurrentTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.neutralCurrentTopic) : undefined,
+        harmonicCurrentsTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.harmonicCurrentsTopic) : undefined,
+        harmonicPhasesTopic: selectedType === 'electricalSensor' ? optionalTopic(raw.harmonicPhasesTopic) : undefined,
         energyImportedDailyTopic: dailyImported,
         energyImportedDailyUnit: energyUnit(raw.energyImportedDailyUnit),
         energyExportedDailyTopic: dailyExported,
@@ -360,6 +377,9 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       ...(device.rmsPowerTopic ? { rmsPower: null } : {}),
       ...(device.frequencyTopic ? { frequency: null } : {}),
       ...(device.powerFactorTopic ? { powerFactor: null } : {}),
+      ...(device.neutralCurrentTopic ? { neutralCurrent: null } : {}),
+      ...(device.harmonicCurrentsTopic ? { harmonicCurrents: null } : {}),
+      ...(device.harmonicPhasesTopic ? { harmonicPhases: null } : {}),
     };
     const electricalEnergyMeasurement = device.deviceType === 'outlet'
       ? { cumulativeEnergyImported: { energy: 0 }, cumulativeEnergyExported: { energy: 0 } }
@@ -367,17 +387,31 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
 
     switch (device.deviceType) {
       case 'electricalMeter':
-      case 'electricalSensor':
+      case 'electricalSensor': {
+        const optionalFeatures = device.deviceType === 'electricalSensor'
+          ? [
+              ...(device.neutralCurrentTopic ? ['PolyphasePower'] : []),
+              ...(device.harmonicCurrentsTopic ? ['Harmonics'] : []),
+              ...(device.harmonicPhasesTopic ? ['PowerQuality'] : []),
+            ]
+          : [];
+        const sensorType = optionalFeatures.length > 0
+          ? (types.ElectricalSensor as any).with(
+              (this.matter.deviceRequirements.ElectricalSensor.ElectricalPowerMeasurementServer as any)
+                .with('AlternatingCurrent', ...optionalFeatures),
+            )
+          : types.ElectricalSensor;
         return {
           ...base,
           deviceType: device.deviceType === 'electricalMeter'
-            ? types.ElectricalMeter : types.ElectricalSensor,
+            ? types.ElectricalMeter : sensorType,
           clusters: {
             electricalPowerMeasurement: expandedElectricalPowerMeasurement,
             ...(device.deviceType === 'electricalMeter' || Object.keys(nativeEnergy).length > 0
               ? { electricalEnergyMeasurement } : {}),
           },
         };
+      }
       case 'solarPower':
         return {
           ...base,
@@ -571,6 +605,9 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       this.addBinding(device.rmsPowerTopic, device, 'rmsPower');
       this.addBinding(device.frequencyTopic, device, 'frequency');
       this.addBinding(device.powerFactorTopic, device, 'powerFactor');
+      this.addBinding(device.neutralCurrentTopic, device, 'neutralCurrent');
+      this.addBinding(device.harmonicCurrentsTopic, device, 'harmonicCurrents');
+      this.addBinding(device.harmonicPhasesTopic, device, 'harmonicPhases');
       this.addBinding(device.energyImportedDailyTopic, device, 'energyImportedDaily');
       this.addBinding(device.energyExportedDailyTopic, device, 'energyExportedDaily');
       this.addBinding(device.energyImportedTopic, device, 'energyImported');
@@ -688,6 +725,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         logValue = `${vars} var`;
         break;
       }
+      case 'neutralCurrent':
       case 'reactiveCurrent':
       case 'apparentCurrent':
       case 'apparentPower':
@@ -717,6 +755,10 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
           : kind.includes('Current') ? 'A' : kind === 'rmsVoltage' ? 'V' : 'VA/W'}`;
         break;
       }
+      case 'harmonicCurrents':
+      case 'harmonicPhases':
+        // Harmonics are encoded as a JSON array and handled separately.
+        return;
       case 'energyImported':
       case 'energyExported': {
         if (rawValue < 0) {
