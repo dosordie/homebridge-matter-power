@@ -95,7 +95,7 @@
               "title": "Current topic (optional)",
               "type": "string",
               "placeholder": "home/grid/current",
-              "description": "Numeric MQTT payload in A. SolarPower interprets magnitude as generation current flowing OUT (negative Matter sign); ElectricalMeter/Sensor and other types preserve signed values. Use inverter output current for PV, not grid-connection net current."
+              "description": "Signed active current in A. ElectricalSensor and ElectricalMeter preserve sign; SolarPower treats magnitude as outgoing PV current (negative Matter mA). Do not use household grid current as total PV current."
             },
             "currentMultiplier": {
               "title": "Current multiplier",
@@ -173,13 +173,13 @@
               "title": "AC reactive power topic (optional)",
               "type": "string",
               "placeholder": "home/pv/reactive_var",
-              "description": "Signed reactive power (var). SolarPower values must be measured at the PV inverter, not at the grid import/export point. Signed MQTT input is retained."
+              "description": "Signed reactive power in var; sent in milli-var. Available for AC ElectricalSensor/Meter and SolarPower. Use actual source readings; do not derive the sign."
             },
             "energyExportedDailyTopic": {
               "title": "PV energy generated today topic (optional, SolarPower only)",
               "type": "string",
               "placeholder": "home/pv/energy_today_kwh",
-              "description": "PV production SINCE LOCAL MIDNIGHT (not lifetime and not grid feed-in). Publishes Matter PeriodicEnergyExported; requires consistent Homebridge host local timezone. Enabling it changes the PV Matter accessory identity to activate the PeriodicEnergy feature."
+              "description": "SolarPower or ElectricalSensor. Periodic exported energy since local midnight, not the lifetime counter. On enabling, changes identity to advertise PeriodicEnergy."
             },
             "energyExportedDailyUnit": {
               "title": "PV daily energy unit",
@@ -190,6 +190,88 @@
                 "kWh"
               ],
               "description": "Unit for energyExportedDailyTopic. Period is local midnight through the MQTT reading."
+            },
+            "reactiveCurrentTopic": {
+              "title": "Reactive current (A)",
+              "type": "string",
+              "placeholder": "home/meter/reactive_a",
+              "description": "Signed reactive current, amps; sent as Matter mA."
+            },
+            "apparentCurrentTopic": {
+              "title": "Apparent current (A)",
+              "type": "string",
+              "placeholder": "home/meter/apparent_a",
+              "description": "Signed apparent current, amps; sent as Matter mA."
+            },
+            "apparentPowerTopic": {
+              "title": "Apparent power (VA)",
+              "type": "string",
+              "placeholder": "home/meter/apparent_va",
+              "description": "Signed apparent power, volt-amperes; sent as Matter mVA."
+            },
+            "rmsVoltageTopic": {
+              "title": "RMS voltage (V)",
+              "type": "string",
+              "placeholder": "home/meter/rms_voltage_v",
+              "description": "Non-negative AC RMS voltage, sent as Matter mV."
+            },
+            "rmsCurrentTopic": {
+              "title": "RMS current (A)",
+              "type": "string",
+              "placeholder": "home/meter/rms_current_a",
+              "description": "Signed AC RMS current, sent as Matter mA."
+            },
+            "rmsPowerTopic": {
+              "title": "RMS power (W)",
+              "type": "string",
+              "placeholder": "home/meter/rms_power_w",
+              "description": "Signed AC RMS power, sent as Matter mW."
+            },
+            "frequencyTopic": {
+              "title": "Frequency (Hz)",
+              "type": "string",
+              "placeholder": "home/meter/frequency_hz",
+              "description": "Non-negative grid/inverter AC frequency (Hz); sent as Matter mHz."
+            },
+            "powerFactorTopic": {
+              "title": "Power factor (signed ratio)",
+              "type": "string",
+              "placeholder": "home/meter/power_factor",
+              "description": "Use signed ratio -1.0 to +1.0 (e.g. 0.98). Matter expects 1/100ths percent: 0.98 -> 9800."
+            },
+            "neutralCurrentTopic": {
+              "title": "Polyphase neutral current (A)",
+              "type": "string",
+              "placeholder": "home/meter/neutral_a",
+              "description": "ElectricalSensor only. Signed neutral current A; activates Matter PolyphasePower feature, recreating the endpoint identity."
+            },
+            "harmonicCurrentsTopic": {
+              "title": "Harmonic currents JSON array (A)",
+              "type": "string",
+              "placeholder": "home/meter/harmonics_current",
+              "description": "ElectricalSensor only. JSON array [{\"order\":3,\"measurement\":0.12}]; numeric measurement is A, sent as Matter mA. Activates Harmonics feature."
+            },
+            "harmonicPhasesTopic": {
+              "title": "Harmonic phases JSON array (degrees)",
+              "type": "string",
+              "placeholder": "home/meter/harmonics_phase",
+              "description": "ElectricalSensor only. JSON array [{\"order\":3,\"measurement\":12.5}]; numeric measurement is degrees, sent as Matter millidegrees. Activates PowerQuality feature."
+            },
+            "energyImportedDailyTopic": {
+              "title": "Imported energy today (ElectricalSensor)",
+              "type": "string",
+              "placeholder": "home/meter/import_today_kwh",
+              "description": "ElectricalSensor only. Non-negative amount since local midnight, NOT cumulative lifetime energy. Published as Matter PeriodicEnergyImported with timestamps. Changes device identity."
+            },
+            "energyImportedDailyUnit": {
+              "title": "Imported energy today unit",
+              "type": "string",
+              "enum": [
+                "Wh",
+                "kWh"
+              ],
+              "default": "kWh",
+              "description": "Unit for energyImportedDailyTopic (Wh/kWh)."
             }
           }
         }
