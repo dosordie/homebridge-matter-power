@@ -114,7 +114,14 @@ test('battery storage routes SoC, AC and DC power to distinct parts', async () =
   }] });
   const a = instance.buildAccessory(d);
   assert.equal(a.deviceType, 'BatteryStorage');
-  assert.deepEqual(a.parts.map(x => x.id), ['battery', 'grid', 'ac-meter', 'dc-meter']);
+  assert.deepEqual(a.parts.map(x => x.id), ['battery', 'grid', 'ac-meter', 'dc-meter', 'energy-management']);
+  const dem = a.parts.find(x => x.id === 'energy-management');
+  assert.equal(dem.deviceType, 'DeviceEnergyManagement');
+  assert.equal(dem.clusters.deviceEnergyManagement.esaType, 5);
+  assert.equal(dem.clusters.deviceEnergyManagement.absMinPower, 0);
+  assert.equal(dem.clusters.deviceEnergyManagement.absMaxPower, 0);
+  assert.equal('powerAdjustmentCapability' in dem.clusters.deviceEnergyManagement, false);
+  assert.equal(dem.handlers, undefined);
   assert.equal(a.parts[3].clusters.electricalPowerMeasurement.activePower, null);
   await instance.publishBinding({device:d,kind:'batterySoc'},73.5);
   await instance.publishBinding({device:d,kind:'power'},-2500);
@@ -125,6 +132,20 @@ test('battery storage routes SoC, AC and DC power to distinct parts', async () =
   assert.equal(calls[1][2].activePower, -2500000);
   assert.equal(calls[2][3], 'dc-meter');
   assert.equal(calls[2][2].activePower, -2300000);
+});
+
+test('battery storage can report configured physical power limits without control commands', () => {
+  const { instance } = platform();
+  const [d] = instance.parseDevices({ devices: [{
+    id: 'byd-limits', name: 'Battery', topic: 'battery/power',
+    deviceType: 'batteryStorage', batterySocTopic: 'battery/soc',
+    batteryCapacityMah: 25000,
+    batteryMaxChargePowerW: 3000, batteryMaxDischargePowerW: 4600,
+  }] });
+  const dem = instance.buildAccessory(d).parts.find(x => x.id === 'energy-management');
+  assert.equal(dem.clusters.deviceEnergyManagement.absMinPower, -4600000);
+  assert.equal(dem.clusters.deviceEnergyManagement.absMaxPower, 3000000);
+  assert.equal(dem.handlers, undefined);
 });
 
 test('incomplete native configs are skipped instead of misrepresenting measurements', () => {
