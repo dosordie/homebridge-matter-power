@@ -89,7 +89,7 @@ test('battery storage routes SoC, AC and DC power to distinct parts', async () =
   const { instance, calls } = platform();
   const [d] = instance.parseDevices({ devices: [{
     id: 'byd', name: 'BYD', topic: 'byd/ac', deviceType: 'batteryStorage',
-    batterySocTopic: 'byd/soc', batteryDcPowerTopic: 'byd/dc',
+    batterySocTopic: 'byd/soc', batteryDcPowerTopic: 'byd/dc', batteryCapacityMah: 25000,
   }] });
   const a = instance.buildAccessory(d);
   assert.equal(a.deviceType, 'BatteryStorage');
