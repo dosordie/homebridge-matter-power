@@ -12,7 +12,11 @@ import { MIN_HOMEBRIDGE_VERSION, PLATFORM_NAME, PLUGIN_NAME } from './settings.j
 
 type EnergyUnit = 'Wh' | 'kWh';
 type PowerDeviceType = 'outlet' | 'electricalSensor' | 'electricalMeter' | 'solarPower' | 'batteryStorage';
-type MeasurementKind = 'power' | 'voltage' | 'current' | 'reactivePower' | 'energyImported' | 'energyExported' | 'energyExportedDaily' | 'batterySoc' | 'batteryDcPower';
+type MeasurementKind = 'power' | 'voltage' | 'current'
+  | 'reactiveCurrent' | 'apparentCurrent' | 'reactivePower' | 'apparentPower'
+  | 'rmsVoltage' | 'rmsCurrent' | 'rmsPower' | 'frequency' | 'powerFactor'
+  | 'energyImported' | 'energyExported' | 'energyImportedDaily' | 'energyExportedDaily'
+  | 'batterySoc' | 'batteryDcPower';
 
 interface PowerDeviceConfig {
   id?: string;
@@ -25,6 +29,16 @@ interface PowerDeviceConfig {
   currentTopic?: string;
   currentMultiplier?: number;
   reactivePowerTopic?: string;
+  reactiveCurrentTopic?: string;
+  apparentCurrentTopic?: string;
+  apparentPowerTopic?: string;
+  rmsVoltageTopic?: string;
+  rmsCurrentTopic?: string;
+  rmsPowerTopic?: string;
+  frequencyTopic?: string;
+  powerFactorTopic?: string;
+  energyImportedDailyTopic?: string;
+  energyImportedDailyUnit?: EnergyUnit;
   energyExportedDailyTopic?: string;
   energyExportedDailyUnit?: EnergyUnit;
   energyImportedTopic?: string;
@@ -50,6 +64,16 @@ interface RuntimePowerDevice {
   currentTopic?: string;
   currentMultiplier: number;
   reactivePowerTopic?: string;
+  reactiveCurrentTopic?: string;
+  apparentCurrentTopic?: string;
+  apparentPowerTopic?: string;
+  rmsVoltageTopic?: string;
+  rmsCurrentTopic?: string;
+  rmsPowerTopic?: string;
+  frequencyTopic?: string;
+  powerFactorTopic?: string;
+  energyImportedDailyTopic?: string;
+  energyImportedDailyUnit?: EnergyUnit;
   energyExportedDailyTopic?: string;
   energyExportedDailyUnit: EnergyUnit;
   energyImportedTopic?: string;
@@ -223,11 +247,18 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       seenIds.add(id);
 
       // Keep existing identities unless a new feature-gated cluster composition is requested.
-      // A solar daily period needs PeriodicEnergy in addition to CumulativeEnergy;
-      // Homebridge's cache does not safely swap cluster feature sets in place.
-      const solarDailyEnergy = selectedType === 'solarPower' ? optionalTopic(raw.energyExportedDailyTopic) : undefined;
-      if (optionalTopic(raw.energyExportedDailyTopic) && selectedType !== 'solarPower') {
-        this.log.warn(`Ignoring energyExportedDailyTopic for '${name}': only solarPower supports PV daily yield.`);
+      // Periodic energy changes the Matter cluster feature set. Use a new
+      // identity when enabled so cached endpoints cannot retain old features.
+      // SolarPower supports exported yield; generic ElectricalSensor supports both.
+      const dailyImported = selectedType === 'electricalSensor'
+        ? optionalTopic(raw.energyImportedDailyTopic) : undefined;
+      const dailyExported = selectedType === 'solarPower' || selectedType === 'electricalSensor'
+        ? optionalTopic(raw.energyExportedDailyTopic) : undefined;
+      if (optionalTopic(raw.energyImportedDailyTopic) && selectedType !== 'electricalSensor') {
+        this.log.warn(`Ignoring energyImportedDailyTopic for '${name}': only electricalSensor supports daily imported energy.`);
+      }
+      if (optionalTopic(raw.energyExportedDailyTopic) && !dailyExported) {
+        this.log.warn(`Ignoring energyExportedDailyTopic for '${name}': only solarPower/electricalSensor support daily exported energy.`);
       }
       // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
       // Switching the opt-in DEM simulation requires a fresh Matter endpoint:
@@ -240,7 +271,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       const identity = selectedType === 'batteryStorage'
         ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}${batteryAdjustmentTestMode ? '-adjustment-test' : ''}:batteryStorage:${id}`
         : selectedType !== 'outlet'
-          ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${solarDailyEnergy ? '-daily-v1' : ''}:${selectedType}:${id}`
+          ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${dailyImported || dailyExported ? '-daily-v1' : ''}:${selectedType}:${id}`
           : batterySocTopic
           ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
           : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
@@ -256,7 +287,17 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         currentTopic: optionalTopic(raw.currentTopic),
         currentMultiplier: positiveMultiplier(raw.currentMultiplier),
         reactivePowerTopic: optionalTopic(raw.reactivePowerTopic),
-        energyExportedDailyTopic: solarDailyEnergy,
+        reactiveCurrentTopic: optionalTopic(raw.reactiveCurrentTopic),
+        apparentCurrentTopic: optionalTopic(raw.apparentCurrentTopic),
+        apparentPowerTopic: optionalTopic(raw.apparentPowerTopic),
+        rmsVoltageTopic: optionalTopic(raw.rmsVoltageTopic),
+        rmsCurrentTopic: optionalTopic(raw.rmsCurrentTopic),
+        rmsPowerTopic: optionalTopic(raw.rmsPowerTopic),
+        frequencyTopic: optionalTopic(raw.frequencyTopic),
+        powerFactorTopic: optionalTopic(raw.powerFactorTopic),
+        energyImportedDailyTopic: dailyImported,
+        energyImportedDailyUnit: energyUnit(raw.energyImportedDailyUnit),
+        energyExportedDailyTopic: dailyExported,
         energyExportedDailyUnit: energyUnit(raw.energyExportedDailyUnit),
         energyImportedTopic: optionalTopic(raw.energyImportedTopic),
         energyImportedUnit: energyUnit(raw.energyImportedUnit),
@@ -303,6 +344,22 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
     const nativeEnergy = {
       ...(device.energyImportedTopic ? { cumulativeEnergyImported: { energy: 0 } } : {}),
       ...(device.energyExportedTopic ? { cumulativeEnergyExported: { energy: 0 } } : {}),
+      ...(device.energyImportedDailyTopic ? { periodicEnergyImported: null } : {}),
+      ...(device.energyExportedDailyTopic ? { periodicEnergyExported: null } : {}),
+    };
+    // Only configured MQTT measurements appear as optional Matter attributes.
+    // Homebridge supplies the required power mode, accuracy and topology.
+    const expandedElectricalPowerMeasurement = {
+      ...electricalPowerMeasurement,
+      ...(device.reactivePowerTopic ? { reactivePower: null } : {}),
+      ...(device.reactiveCurrentTopic ? { reactiveCurrent: null } : {}),
+      ...(device.apparentCurrentTopic ? { apparentCurrent: null } : {}),
+      ...(device.apparentPowerTopic ? { apparentPower: null } : {}),
+      ...(device.rmsVoltageTopic ? { rmsVoltage: null } : {}),
+      ...(device.rmsCurrentTopic ? { rmsCurrent: null } : {}),
+      ...(device.rmsPowerTopic ? { rmsPower: null } : {}),
+      ...(device.frequencyTopic ? { frequency: null } : {}),
+      ...(device.powerFactorTopic ? { powerFactor: null } : {}),
     };
     const electricalEnergyMeasurement = device.deviceType === 'outlet'
       ? { cumulativeEnergyImported: { energy: 0 }, cumulativeEnergyExported: { energy: 0 } }
@@ -316,7 +373,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
           deviceType: device.deviceType === 'electricalMeter'
             ? types.ElectricalMeter : types.ElectricalSensor,
           clusters: {
-            electricalPowerMeasurement,
+            electricalPowerMeasurement: expandedElectricalPowerMeasurement,
             ...(device.deviceType === 'electricalMeter' || Object.keys(nativeEnergy).length > 0
               ? { electricalEnergyMeasurement } : {}),
           },
@@ -506,6 +563,15 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       this.addBinding(device.voltageTopic, device, 'voltage');
       this.addBinding(device.currentTopic, device, 'current');
       this.addBinding(device.reactivePowerTopic, device, 'reactivePower');
+      this.addBinding(device.reactiveCurrentTopic, device, 'reactiveCurrent');
+      this.addBinding(device.apparentCurrentTopic, device, 'apparentCurrent');
+      this.addBinding(device.apparentPowerTopic, device, 'apparentPower');
+      this.addBinding(device.rmsVoltageTopic, device, 'rmsVoltage');
+      this.addBinding(device.rmsCurrentTopic, device, 'rmsCurrent');
+      this.addBinding(device.rmsPowerTopic, device, 'rmsPower');
+      this.addBinding(device.frequencyTopic, device, 'frequency');
+      this.addBinding(device.powerFactorTopic, device, 'powerFactor');
+      this.addBinding(device.energyImportedDailyTopic, device, 'energyImportedDaily');
       this.addBinding(device.energyExportedDailyTopic, device, 'energyExportedDaily');
       this.addBinding(device.energyImportedTopic, device, 'energyImported');
       this.addBinding(device.energyExportedTopic, device, 'energyExported');
