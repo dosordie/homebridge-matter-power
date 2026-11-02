@@ -251,12 +251,14 @@ The input topic is positive **generation** in watts. Matter reports outgoing gen
   "batterySocTopic": "home/byd/soc",
   "batteryDcPowerTopic": "home/byd/dc_power",
   "batteryCapacityMah": 25000,
+  "batteryMaxChargePowerW": 3000,
+  "batteryMaxDischargePowerW": 4600,
   "energyImportedTopic": "home/byd/charged_total",
   "energyExportedTopic": "home/byd/discharged_total"
 }
 ```
 
-Battery power convention: **positive = charging; negative = discharging**. `batteryCapacityMah` is required because Matter mandates a rated battery capacity. The example `25000` means 25 Ah at pack voltage (approximately BYD HVS capacity); it is **not** 25000 kWh. `batteryDcPowerTopic` and energy totals are optional; unknown DC/energy values remain null rather than being fabricated. The composed device includes battery and wired AC PowerSource parts, plus AC and DC ElectricalSensor parts. There is **no DeviceEnergyManagement control part**, because this plugin does not implement charging/discharging commands. The SoC is sent to the `battery` PowerSource part with 0.5% resolution.
+Battery power convention: **positive = charging; negative = discharging**. `batteryCapacityMah` is required because Matter mandates a rated battery capacity. The example `25000` means 25 Ah at pack voltage (approximately BYD HVS capacity); it is **not** 25000 kWh. `batteryDcPowerTopic` and energy totals are optional; unknown DC/energy values remain null rather than being fabricated. The composed device includes battery and wired AC PowerSource parts, plus AC and DC ElectricalSensor parts. Matter requires a `DeviceEnergyManagement` part, so v0.4.2 adds a **read-only** energy-management endpoint. It does not advertise power adjustment, does not accept charge/discharge requests and never controls the inverter. Use `batteryMaxChargePowerW` and `batteryMaxDischargePowerW` for **actual hardware maximum power values** (the example 3000/4600 W is illustrative only, not inferred from your BYD). If omitted, the required power bounds default to 0 W for a temporary test and a warning is logged; those values are not meaningful hardware specifications. The SoC is sent to the `battery` PowerSource part with 0.5% resolution.
 
 Do **not** repurpose a live inverter's PV production counter as a battery charge counter. Select the topics corresponding to the actual measurement direction.
 
@@ -265,7 +267,7 @@ Do **not** repurpose a live inverter's PV production counter as a battery charge
 - `batterySocTopic` is supported only for `outlet` and `batteryStorage`. If configured on `electricalMeter`, `electricalSensor` or `solarPower`, the value is ignored with a startup warning. Native meters have no battery `PowerSource` cluster.
 
 - Homebridge 2.5.0+ is mandatory for the three new native energy device types and `electricalSensor`.
-- **Apple Home 27.2 rendering is not confirmed** for the native SolarPower / BatteryStorage / ElectricalMeter types. They may appear as unsupported devices; this is an interoperability test, not a promised UI feature.
+- **Real Apple Home 27.2 results:** native ElectricalMeter appears and displays live wattage, but no kWh; native SolarPower and BatteryStorage registered successfully in Homebridge but were invisible in Apple Home in initial tests. Adding the missing BatteryStorage DeviceEnergyManagement part fixes a Matter conformance warning, not necessarily Apple's lack of UI support.
 - Existing `outlet` devices retain their UUID, state shape and watt display. Test new types under **new device IDs**, leaving your current `Hausverbrauch` alone.
 - Standalone per-device Matter pairing is **not** exposed as a selectable mode by Homebridge 2.5.0's public `MatterAPI`. `registerPlatformAccessories` bridges these types; only selected internally forced types publish externally. A `standalone` option would falsely promise functionality, so it has not been added.
 - Native device type conversion intentionally changes the Matter endpoint identity. Back up Homebridge configuration before testing.
