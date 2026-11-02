@@ -150,6 +150,18 @@
               "type": "integer",
               "minimum": 1,
               "description": "Required when deviceType=batteryStorage. The physical pack's capacity in milliamp-hours (e.g. BYD HVS 12.8 kWh at nominal 512 V: 25000 mAh). Matter requires this value; do not enter kWh here."
+            },
+            "batteryMaxChargePowerW": {
+              "title": "Battery max charging power (W; native storage)",
+              "type": "number",
+              "minimum": 0,
+              "description": "Optional native BatteryStorage real maximum charging power into battery, in watts. Used by mandatory read-only DeviceEnergyManagement. If absent, zero W is reported as test-only placeholder."
+            },
+            "batteryMaxDischargePowerW": {
+              "title": "Battery max discharging power (W; native storage)",
+              "type": "number",
+              "minimum": 0,
+              "description": "Optional native BatteryStorage real maximum discharging power from battery, in watts. Used by mandatory read-only DeviceEnergyManagement. If absent, zero W is reported as test-only placeholder."
             }
           }
         }
