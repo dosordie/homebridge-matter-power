@@ -272,8 +272,9 @@ export class MatterPowerPlatform {
                             },
                         },
                         {
-                            // Mandatory component of a Matter BatteryStorage device. Read-only:
-                            // no PowerAdjustment capability or command handlers are advertised.
+                            // Matter BatteryStorage requires a DEM component with PowerAdjustment.
+                            // Advertising a null capability means adjustment is unavailable;
+                            // reject *all* commands instead of acknowledging fake state changes.
                             id: 'energy-management',
                             displayName: `${device.name} energy management`,
                             deviceType: types.DeviceEnergyManagement,
@@ -282,11 +283,23 @@ export class MatterPowerPlatform {
                                     esaType: 5, // BatteryStorage
                                     esaCanGenerate: true,
                                     esaState: 1, // Online; does not imply charge/discharge control.
-                                    // Matter requires non-null limits. 0 is a test fallback only;
-                                    // configure the physical limits for accurate reporting.
+                                    // Matter requires non-null bounds. 0 is only a test fallback;
+                                    // configure physical maxima for meaningful rated bounds.
                                     absMinPower: device.batteryMaxDischargePowerW
                                         ? -Math.round(device.batteryMaxDischargePowerW * 1000) : 0,
                                     absMaxPower: Math.round((device.batteryMaxChargePowerW ?? 0) * 1000),
+                                    powerAdjustmentCapability: null, // No adjust capability.
+                                    optOutState: 3, // Opted out of all external optimisation.
+                                },
+                            },
+                            handlers: {
+                                deviceEnergyManagement: {
+                                    powerAdjustRequest: async () => {
+                                        throw new Error('BYD battery is monitor-only: remote power adjustment is disabled.');
+                                    },
+                                    cancelPowerAdjustRequest: async () => {
+                                        throw new Error('BYD battery is monitor-only: no power adjustment can be cancelled.');
+                                    },
                                 },
                             },
                         },
