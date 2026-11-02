@@ -297,6 +297,8 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
       activePower: 0,
       voltage: null,
       activeCurrent: null,
+      // AC reactive-power reporting is optional; do not invent a measurement.
+      ...(device.reactivePowerTopic ? { reactivePower: null } : {}),
     };
     const nativeEnergy = {
       ...(device.energyImportedTopic ? { cumulativeEnergyImported: { energy: 0 } } : {}),
