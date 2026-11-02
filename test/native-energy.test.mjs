@@ -15,7 +15,7 @@ function platform() {
       uuid: { generate: value => value },
       deviceTypes: Object.fromEntries(
         ['OnOffOutlet', 'ElectricalSensor', 'ElectricalMeter', 'SolarPower',
-          'BatteryStorage', 'PowerSource'].map(x => [x, x]),
+          'BatteryStorage', 'PowerSource', 'DeviceEnergyManagement'].map(x => [x, x]),
       ),
       clusterNames: {
         ElectricalPowerMeasurement: 'electricalPowerMeasurement',
