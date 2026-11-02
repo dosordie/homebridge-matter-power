@@ -225,6 +225,77 @@ Supported values for `deviceType`: `outlet`, `electricalSensor`, `electricalMete
 
 `electricalMeter` requires at least one cumulative energy topic. Positive watts mean import; negative watts mean export. The native endpoint advertises only configured energy directions (unlike the legacy outlet which retains both for compatibility).
 
+### Electrical Sensor (extended meter, v0.4.6)
+
+The native `electricalSensor` type can be used for PV power, inverter readings or an
+AC grid/mains meter. Apple Home currently displays its power as a green lightning
+tile; other values may be accessible only to Matter controllers that expose
+them. It does **not** require cumulative kWh topics.
+
+All fields below are optional except `topic` (W). Do **not** infer PV current
+or PV production from a grid exchange meter. The sensor **preserves signs**
+of power and current; it does *not* automatically invert PV power like
+`solarPower`.
+
+```json
+{
+  "id": "pv-sensor-test",
+  "name": "PV Electrical Sensor",
+  "deviceType": "electricalSensor",
+  "topic": "home/pv/power_w",
+  "voltageTopic": "home/pv/voltage_v",
+  "currentTopic": "home/pv/current_a",
+  "reactivePowerTopic": "home/pv/reactive_var",
+  "reactiveCurrentTopic": "home/pv/reactive_a",
+  "apparentPowerTopic": "home/pv/apparent_va",
+  "apparentCurrentTopic": "home/pv/apparent_a",
+  "rmsVoltageTopic": "home/pv/rms_voltage_v",
+  "rmsCurrentTopic": "home/pv/rms_current_a",
+  "rmsPowerTopic": "home/pv/rms_power_w",
+  "frequencyTopic": "home/pv/frequency_hz",
+  "powerFactorTopic": "home/pv/power_factor",
+  "energyImportedTopic": "home/pv/lifetime_import_kwh",
+  "energyExportedTopic": "home/pv/lifetime_export_kwh",
+  "energyImportedUnit": "kWh",
+  "energyExportedUnit": "kWh",
+  "energyImportedDailyTopic": "home/pv/import_today_kwh",
+  "energyImportedDailyUnit": "kWh",
+  "energyExportedDailyTopic": "home/pv/export_today_kwh",
+  "energyExportedDailyUnit": "kWh"
+}
+```
+
+**These MQTT names are examples, not real topics.** Configure only data you can
+actually measure. Matter scaling is automatic: V → mV, A → mA, W → mW,
+var → mvar, VA → mVA, Hz → mHz. `powerFactorTopic` accepts a **signed
+dimensionless ratio** from -1 to +1 (e.g. 0.98 → Matter 9800, not 98).
+
+`energyImportedTopic` and `energyExportedTopic` are **lifetime cumulative
+counters** and must not reset at midnight. By contrast,
+`energyImportedDailyTopic` and `energyExportedDailyTopic` are amounts
+**since local midnight**, reported as Matter `PeriodicEnergyImported` and
+`PeriodicEnergyExported` respectively with period start/end timestamps.
+Adding either daily topic enables the Matter PeriodicEnergy feature, changes
+the sensor's Matter identity for reliable feature composition, and may require
+Apple Home to rediscover the replacement sensor.
+
+For *real* polyphase/power-quality measurements, the optional extended
+fields are `neutralCurrentTopic` (signed A, enables `PolyphasePower`),
+`harmonicCurrentsTopic` (enables `Harmonics`) and
+`harmonicPhasesTopic` (enables `PowerQuality`). Harmonic topics must carry
+JSON arrays, for example `[{"order":3,"measurement":0.12}]`: measurements
+are in **amps** for harmonic currents or **degrees** for phase angles.
+They are scaled to milli-units in Matter. Each order must be a unique integer
+from 1 to 255; a `null` measurement is allowed. These feature-gated options
+also change sensor identity to avoid stale Homebridge caches. They are not
+necessary for standard power/energy readings, and Apple Home is not expected
+to show a waveform or harmonics interface.
+
+Homebridge supplies `PowerTopology` and the default measurement accuracy
+metadata. Additional optional Matter structures such as live min/max ranges,
+cumulative reset timestamps, and per-phase sub-endpoints require separate
+metadata/source data and are **not synthesized**.
+
 ### Solar Power
 
 ```json
