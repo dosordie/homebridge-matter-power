@@ -2,10 +2,14 @@
   "pluginAlias": "MatterPower",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Matter-only plugin: publishes MQTT values as native Matter electrical power/energy measurements and optional experimental battery SoC. Enable Matter for this plugin's child bridge and pair the Matter QR code with Apple Home.",
+  "headerDisplay": "Matter-only MQTT measurements. The default outlet remains backward compatible. Native Electrical Meter, Electrical Sensor, Solar Power and Battery Storage types require Homebridge 2.5.0+ and are experimental in Apple Home. Each device remains behind the Matter bridge; standalone publishing is not supported by Homebridge's public API.",
   "schema": {
     "type": "object",
-    "required": ["name", "mqttUrl", "devices"],
+    "required": [
+      "name",
+      "mqttUrl",
+      "devices"
+    ],
     "properties": {
       "name": {
         "title": "Name",
@@ -33,7 +37,10 @@
         "items": {
           "title": "Electrical device",
           "type": "object",
-          "required": ["name", "topic"],
+          "required": [
+            "name",
+            "topic"
+          ],
           "properties": {
             "id": {
               "title": "Stable ID (optional)",
@@ -45,6 +52,19 @@
               "type": "string",
               "required": true,
               "placeholder": "Hausverbrauch"
+            },
+            "deviceType": {
+              "title": "Matter device type (experimental)",
+              "type": "string",
+              "enum": [
+                "outlet",
+                "electricalSensor",
+                "electricalMeter",
+                "solarPower",
+                "batteryStorage"
+              ],
+              "default": "outlet",
+              "description": "outlet preserves previous pairing and Apple Home watt display. Native types need Homebridge 2.5+. Solar Power requires energyExportedTopic; Battery Storage requires batterySocTopic; Electrical Meter requires a cumulative energy topic."
             },
             "topic": {
               "title": "Power topic",
@@ -87,31 +107,43 @@
               "title": "Imported/consumed energy topic (optional)",
               "type": "string",
               "placeholder": "home/house/energy_total",
-              "description": "Monotonically increasing cumulative energy counter. Do not use a daily counter that resets to zero."
+              "description": "Monotonically increasing cumulative energy counter. Do not use a daily counter that resets to zero. For BatteryStorage: charging energy. For solarPower use energyExportedTopic instead."
             },
             "energyImportedUnit": {
               "title": "Imported energy unit",
               "type": "string",
               "default": "kWh",
-              "enum": ["Wh", "kWh"]
+              "enum": [
+                "Wh",
+                "kWh"
+              ]
             },
             "energyExportedTopic": {
               "title": "Exported/returned energy topic (optional)",
               "type": "string",
               "placeholder": "home/grid/export_total",
-              "description": "Monotonically increasing cumulative returned/exported energy counter."
+              "description": "Monotonically increasing cumulative returned/exported energy counter. SolarPower requires this for cumulative generation."
             },
             "energyExportedUnit": {
               "title": "Exported energy unit",
               "type": "string",
               "default": "kWh",
-              "enum": ["Wh", "kWh"]
+              "enum": [
+                "Wh",
+                "kWh"
+              ]
             },
             "batterySocTopic": {
               "title": "Battery SoC topic (experimental)",
               "type": "string",
               "placeholder": "home/battery/soc",
               "description": "Numeric MQTT payload from 0 to 100 percent. Exposed through Matter PowerSource.batPercentRemaining. Apple Home support for bridged battery updates may be limited."
+            },
+            "batteryDcPowerTopic": {
+              "title": "Battery DC power topic (optional)",
+              "type": "string",
+              "placeholder": "home/battery/dc_power",
+              "description": "For batteryStorage only. Signed battery DC power in watts, positive = charging, negative = discharging. Unknown if not provided."
             }
           }
         }
