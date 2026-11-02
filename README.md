@@ -6,7 +6,7 @@ Matter-only Homebridge plugin that exposes arbitrary MQTT electrical measurement
 
 ## What it does
 
-The plugin creates virtual Matter `OnOffOutlet` accessories and feeds them from numeric MQTT topics.
+The plugin creates virtual Matter electrical accessories from numeric MQTT topics. Existing configurations continue to create `OnOffOutlet` accessories; v0.4 adds opt-in native energy device types.
 
 Supported measurements:
 
@@ -44,7 +44,7 @@ The endpoint intentionally uses Matter's `OnOffOutlet` device type. Current Appl
 
 ## Requirements
 
-- Homebridge 2.4.0+
+- Homebridge 2.4.0+ for legacy outlet mode; **2.5.0+ for new native device types**
 - Node.js 22.12+, 24 or 26
 - Homebridge child bridge with **Matter enabled**
 - MQTT broker
@@ -202,9 +202,76 @@ To avoid Apple/Homebridge retaining the older v0.1 endpoint shape, v0.2 uses a n
 
 v0.3 adds optional `batterySocTopic` support through Matter `PowerSource.batPercentRemaining`. Non-battery accessories keep the v0.2/v0.2.1 identity. Battery-enabled accessories use a separate battery schema identity so Apple/Homebridge discovers the additional PowerSource capability on a newly created endpoint.
 
+## v0.4 experimental native energy devices (Homebridge 2.5+)
+
+The default `deviceType: "outlet"` keeps the **exact v0.3 Matter UUID**, including existing outlet battery SoC. Nothing changes unless you explicitly opt in.
+
+Supported values for `deviceType`: `outlet`, `electricalSensor`, `electricalMeter`, `solarPower`, `batteryStorage`. Switching between them intentionally creates a different Matter accessory identity. The Matter child bridge itself is not reset.
+
+### Grid electricity meter
+
+```json
+{
+  "id": "grid-native-test",
+  "name": "Netz Test",
+  "deviceType": "electricalMeter",
+  "topic": "home/grid/power",
+  "energyImportedTopic": "home/grid/import_total",
+  "energyImportedUnit": "kWh",
+  "energyExportedTopic": "home/grid/export_total",
+  "energyExportedUnit": "kWh"
+}
+```
+
+`electricalMeter` requires at least one cumulative energy topic. Positive watts mean import; negative watts mean export. The native endpoint advertises only configured energy directions (unlike the legacy outlet which retains both for compatibility).
+
+### Solar Power
+
+```json
+{
+  "id": "solar-native-test",
+  "name": "PV Test",
+  "deviceType": "solarPower",
+  "topic": "home/pv/power",
+  "energyExportedTopic": "home/pv/energy_total",
+  "energyExportedUnit": "kWh"
+}
+```
+
+The input topic is positive **generation** in watts. Matter reports outgoing generation as negative active power. Solar production is reported as `cumulativeEnergyExported`, not imported. A composed Matter SolarPower device includes a wired PowerSource and an ElectricalSensor part named `meter`.
+
+### Battery Storage
+
+```json
+{
+  "id": "byd-native-test",
+  "name": "BYD Test",
+  "deviceType": "batteryStorage",
+  "topic": "home/byd/ac_power",
+  "batterySocTopic": "home/byd/soc",
+  "batteryDcPowerTopic": "home/byd/dc_power",
+  "energyImportedTopic": "home/byd/charged_total",
+  "energyExportedTopic": "home/byd/discharged_total"
+}
+```
+
+Battery power convention: **positive = charging; negative = discharging**. `batteryDcPowerTopic` and energy totals are optional; unknown DC/energy values remain null rather than being fabricated. The composed device includes battery and wired AC PowerSource parts, plus AC and DC ElectricalSensor parts. There is **no DeviceEnergyManagement control part**, because this plugin does not implement charging/discharging commands. The SoC is sent to the `battery` PowerSource part with 0.5% resolution.
+
+Do **not** repurpose a live inverter's PV production counter as a battery charge counter. Select the topics corresponding to the actual measurement direction.
+
+### Compatibility and caveats
+
+- Homebridge 2.5.0+ is mandatory for the three new native energy device types and `electricalSensor`.
+- **Apple Home 27.2 rendering is not confirmed** for the native SolarPower / BatteryStorage / ElectricalMeter types. They may appear as unsupported devices; this is an interoperability test, not a promised UI feature.
+- Existing `outlet` devices retain their UUID, state shape and watt display. Test new types under **new device IDs**, leaving your current `Hausverbrauch` alone.
+- Standalone per-device Matter pairing is **not** exposed as a selectable mode by Homebridge 2.5.0's public `MatterAPI`. `registerPlatformAccessories` bridges these types; only selected internally forced types publish externally. A `standalone` option would falsely promise functionality, so it has not been added.
+- Native device type conversion intentionally changes the Matter endpoint identity. Back up Homebridge configuration before testing.
+
 ## Current scope
 
 Implemented:
+
+- optional Matter 1.6 device types: ElectricalSensor, ElectricalMeter, SolarPower, BatteryStorage (Homebridge 2.5+)
 
 - multiple virtual electrical devices
 - MQTT input
@@ -225,9 +292,10 @@ Implemented:
 Not implemented yet:
 
 - periodic energy intervals / historical interval data
-- native Matter Solar Power / Battery Storage device types
-- battery charge/discharge state
+- optional native Matter Solar Power / Battery Storage device types (experimental)
+- automatic battery charging state from a separate MQTT status topic (currently unknown without explicit input)
 - JSON payload extraction
+- per-device standalone Matter publishing (not in Homebridge 2.5 public API)
 - npm publishing
 
 ## Development
