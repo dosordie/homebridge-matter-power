@@ -30,6 +30,7 @@ interface PowerDeviceConfig {
   energyExportedUnit?: EnergyUnit;
   batterySocTopic?: string;
   batteryDcPowerTopic?: string;
+  batteryCapacityMah?: number;
 }
 
 interface RuntimePowerDevice {
@@ -48,6 +49,7 @@ interface RuntimePowerDevice {
   energyExportedUnit: EnergyUnit;
   batterySocTopic?: string;
   batteryDcPowerTopic?: string;
+  batteryCapacityMah?: number;
 }
 
 interface TopicBinding {
@@ -163,6 +165,12 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         this.log.error(`Skipping '${name}': batteryStorage requires batterySocTopic.`);
         continue;
       }
+      if (selectedType === 'batteryStorage'
+        && !(typeof raw.batteryCapacityMah === 'number' && Number.isSafeInteger(raw.batteryCapacityMah)
+          && raw.batteryCapacityMah > 0)) {
+        this.log.error(`Skipping '${name}': batteryStorage requires batteryCapacityMah (rated battery capacity in mAh).`);
+        continue;
+      }
       if (selectedType === 'electricalMeter'
         && !optionalTopic(raw.energyImportedTopic) && !optionalTopic(raw.energyExportedTopic)) {
         this.log.error(`Skipping '${name}': electricalMeter requires an imported or exported cumulative energy topic.`);
@@ -203,6 +211,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
         energyExportedUnit: energyUnit(raw.energyExportedUnit),
         batterySocTopic,
         batteryDcPowerTopic: optionalTopic(raw.batteryDcPowerTopic),
+        batteryCapacityMah: raw.batteryCapacityMah,
       });
     }
 
@@ -290,7 +299,7 @@ export class MatterPowerPlatform implements DynamicPlatformPlugin {
                 batChargeLevel: 0, batReplacementNeeded: false,
                 batReplaceability: 3, batChargeState: 0,
                 batFunctionalWhileCharging: true,
-                batVoltage: null,
+                batVoltage: null, batCapacity: device.batteryCapacityMah,
                 batTimeRemaining: null, batTimeToFullCharge: null,
                 batChargingCurrent: null, activeBatFaults: [], activeBatChargeFaults: [],
               } },
