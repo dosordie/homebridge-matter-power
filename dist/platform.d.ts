@@ -6,6 +6,7 @@ export declare class MatterPowerPlatform implements DynamicPlatformPlugin {
     private readonly cachedMatterAccessories;
     private readonly bindingsByTopic;
     private readonly lastMatterValues;
+    private readonly lastDailyPeriodStart;
     private readonly firstLoggedValues;
     private mqttClient?;
     constructor(log: Logging, platformConfig: PlatformConfig, api: API);

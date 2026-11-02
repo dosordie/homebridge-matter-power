@@ -5,6 +5,7 @@ const ACCESSORY_SCHEMA_VERSION = 'v3';
 const BATTERY_SCHEMA_VERSION = 'v1';
 const NATIVE_SCHEMA_VERSION = 'v1';
 const BATTERY_STORAGE_SCHEMA_VERSION = 'v2';
+const MATTER_EPOCH_UNIX_SECONDS = 946684800; // 2000-01-01T00:00:00Z
 const TEST_ADJUSTMENT_POWER_W = 1000; // Deliberate synthetic rating, never sent to the BYD.
 function optionalTopic(value) {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -30,6 +31,7 @@ export class MatterPowerPlatform {
     cachedMatterAccessories = new Map();
     bindingsByTopic = new Map();
     lastMatterValues = new Map();
+    lastDailyPeriodStart = new Map();
     firstLoggedValues = new Set();
     mqttClient;
     constructor(log, platformConfig, api) {
@@ -120,6 +122,13 @@ export class MatterPowerPlatform {
                 continue;
             }
             seenIds.add(id);
+            // Keep existing identities unless a new feature-gated cluster composition is requested.
+            // A solar daily period needs PeriodicEnergy in addition to CumulativeEnergy;
+            // Homebridge's cache does not safely swap cluster feature sets in place.
+            const solarDailyEnergy = selectedType === 'solarPower' ? optionalTopic(raw.energyExportedDailyTopic) : undefined;
+            if (optionalTopic(raw.energyExportedDailyTopic) && selectedType !== 'solarPower') {
+                this.log.warn(`Ignoring energyExportedDailyTopic for '${name}': only solarPower supports PV daily yield.`);
+            }
             // Keep every v0.3 outlet UUID unchanged, including existing battery-enabled outlets.
             // Switching the opt-in DEM simulation requires a fresh Matter endpoint:
             // Homebridge caches compositions and does not replace them in place.
@@ -131,7 +140,7 @@ export class MatterPowerPlatform {
             const identity = selectedType === 'batteryStorage'
                 ? `${PLUGIN_NAME}:native-${BATTERY_STORAGE_SCHEMA_VERSION}${batteryAdjustmentTestMode ? '-adjustment-test' : ''}:batteryStorage:${id}`
                 : selectedType !== 'outlet'
-                    ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}:${selectedType}:${id}`
+                    ? `${PLUGIN_NAME}:native-${NATIVE_SCHEMA_VERSION}${solarDailyEnergy ? '-daily-v1' : ''}:${selectedType}:${id}`
                     : batterySocTopic
                         ? `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:battery-${BATTERY_SCHEMA_VERSION}:${id}`
                         : `${PLUGIN_NAME}:${ACCESSORY_SCHEMA_VERSION}:${id}`;
@@ -145,6 +154,9 @@ export class MatterPowerPlatform {
                 voltageMultiplier: positiveMultiplier(raw.voltageMultiplier),
                 currentTopic: optionalTopic(raw.currentTopic),
                 currentMultiplier: positiveMultiplier(raw.currentMultiplier),
+                reactivePowerTopic: optionalTopic(raw.reactivePowerTopic),
+                energyExportedDailyTopic: solarDailyEnergy,
+                energyExportedDailyUnit: energyUnit(raw.energyExportedDailyUnit),
                 energyImportedTopic: optionalTopic(raw.energyImportedTopic),
                 energyImportedUnit: energyUnit(raw.energyImportedUnit),
                 energyExportedTopic: optionalTopic(raw.energyExportedTopic),
@@ -181,6 +193,8 @@ export class MatterPowerPlatform {
             activePower: 0,
             voltage: null,
             activeCurrent: null,
+            // AC reactive-power reporting is optional; do not invent a measurement.
+            ...(device.reactivePowerTopic ? { reactivePower: null } : {}),
         };
         const nativeEnergy = {
             ...(device.energyImportedTopic ? { cumulativeEnergyImported: { energy: 0 } } : {}),
@@ -220,9 +234,13 @@ export class MatterPowerPlatform {
                             displayName: `${device.name} generation`,
                             deviceType: types.ElectricalSensor,
                             clusters: {
-                                electricalPowerMeasurement: { activePower: 0, voltage: null, activeCurrent: null },
+                                electricalPowerMeasurement: {
+                                    activePower: 0, voltage: null, activeCurrent: null,
+                                    ...(device.reactivePowerTopic ? { reactivePower: null } : {}),
+                                },
                                 electricalEnergyMeasurement: {
                                     cumulativeEnergyExported: { energy: 0 },
+                                    ...(device.energyExportedDailyTopic ? { periodicEnergyExported: null } : {}),
                                 },
                             },
                         },
@@ -377,6 +395,8 @@ export class MatterPowerPlatform {
             this.addBinding(device.topic, device, 'power');
             this.addBinding(device.voltageTopic, device, 'voltage');
             this.addBinding(device.currentTopic, device, 'current');
+            this.addBinding(device.reactivePowerTopic, device, 'reactivePower');
+            this.addBinding(device.energyExportedDailyTopic, device, 'energyExportedDaily');
             this.addBinding(device.energyImportedTopic, device, 'energyImported');
             this.addBinding(device.energyExportedTopic, device, 'energyExported');
             this.addBinding(device.batterySocTopic, device, 'batterySoc');
@@ -462,15 +482,25 @@ export class MatterPowerPlatform {
             case 'current': {
                 partId = device.deviceType === 'solarPower' ? 'meter'
                     : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
-                const amps = rawValue * device.currentMultiplier;
-                if (amps < 0) {
-                    this.log.warn(`Ignoring negative current for '${device.name}': ${amps} A`);
-                    return;
-                }
+                // In Matter, current leaving a generator is negative, just like active power.
+                // Other device types retain the signed input; negative grid flow is valid.
+                const inputAmps = rawValue * device.currentMultiplier;
+                const amps = device.deviceType === 'solarPower' ? -Math.abs(inputAmps) : inputAmps;
                 matterValue = this.toSafeInteger(amps * 1000, `current value for '${device.name}'`);
                 cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
                 state = { activeCurrent: matterValue };
                 logValue = `${amps} A`;
+                break;
+            }
+            case 'reactivePower': {
+                // AC reactive power in var -> mvar. Preserve physical flow sign.
+                const vars = rawValue;
+                matterValue = this.toSafeInteger(vars * 1000, `reactive power for '${device.name}'`);
+                partId = device.deviceType === 'solarPower' ? 'meter'
+                    : device.deviceType === 'batteryStorage' ? 'ac-meter' : undefined;
+                cluster = this.matter.clusterNames.ElectricalPowerMeasurement;
+                state = { reactivePower: matterValue };
+                logValue = `${vars} var`;
                 break;
             }
             case 'energyImported':
@@ -489,6 +519,27 @@ export class MatterPowerPlatform {
                     ? { cumulativeEnergyImported: { energy: matterValue } }
                     : { cumulativeEnergyExported: { energy: matterValue } };
                 logValue = `${rawValue} ${unit}`;
+                break;
+            }
+            case 'energyExportedDaily': {
+                // PV yield since local midnight is PERIODIC energy, never a resettable
+                // cumulative lifetime meter. Date uses the bridge host's timezone.
+                if (device.deviceType !== 'solarPower')
+                    return;
+                if (rawValue < 0) {
+                    this.log.warn(`Ignoring negative PV daily energy for '${device.name}': ${rawValue}`);
+                    return;
+                }
+                const milliWh = rawValue * (device.energyExportedDailyUnit === 'kWh' ? 1_000_000 : 1000);
+                matterValue = this.toSafeInteger(milliWh, `daily energy for '${device.name}'`);
+                const now = new Date();
+                const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const startTimestamp = Math.floor(midnight.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
+                const endTimestamp = Math.floor(now.getTime() / 1000) - MATTER_EPOCH_UNIX_SECONDS;
+                cluster = this.matter.clusterNames.ElectricalEnergyMeasurement;
+                partId = 'meter';
+                state = { periodicEnergyExported: { energy: matterValue, startTimestamp, endTimestamp } };
+                logValue = `${rawValue} ${device.energyExportedDailyUnit} since local midnight`;
                 break;
             }
             case 'batterySoc': {
@@ -517,7 +568,17 @@ export class MatterPowerPlatform {
         }
         if (matterValue === undefined)
             return;
+        // For daily counters, a reset at midnight can legitimately repeat the same
+        // numeric reading as yesterday; the period start is part of its identity.
         const cacheKey = `${device.uuid}:${kind}`;
+        if (kind === 'energyExportedDaily') {
+            const periodStart = state.periodicEnergyExported.startTimestamp;
+            const previousPeriod = this.lastDailyPeriodStart.get(cacheKey);
+            if (previousPeriod !== periodStart) {
+                this.lastMatterValues.delete(cacheKey);
+            }
+            this.lastDailyPeriodStart.set(cacheKey, periodStart);
+        }
         if (this.lastMatterValues.get(cacheKey) === matterValue)
             return;
         try {
