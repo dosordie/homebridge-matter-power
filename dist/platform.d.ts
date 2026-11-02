@@ -14,6 +14,7 @@ export declare class MatterPowerPlatform implements DynamicPlatformPlugin {
     /** Restore Matter accessories from Homebridge's cache on restart. */
     configureMatterAccessory(accessory: MatterAccessory): void;
     private parseDevices;
+    private nonNegativePower;
     private buildAccessory;
     private addBinding;
     private start;
